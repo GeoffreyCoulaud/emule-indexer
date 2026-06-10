@@ -24,6 +24,9 @@
 - `tests/domain/__init__.py`
 - `tests/domain/test_normalization.py` — tests de la normalisation.
 - `.github/workflows/ci.yml` — pipeline : sync, lint, format-check, types, tests+coverage.
+- `.githooks/pre-push` — hook pré-push : rejoue les checks de la CI.
+- `scripts/setup-dev.sh` — active les hooks (`core.hooksPath`) + `uv sync`.
+- `README.md` — présentation multi-audience (chercheur / curieux / développeur).
 
 ---
 
@@ -336,8 +339,160 @@ git commit -m "ci: lint, format-check, type-check, tests + coverage gate"
 
 ---
 
+## Task 5: Hook de pré-push + installation des hooks
+
+**Files:**
+- Create: `.githooks/pre-push`
+- Create: `scripts/setup-dev.sh`
+
+- [ ] **Step 1: Créer le hook de pré-push**
+
+`.githooks/pre-push` :
+```bash
+#!/usr/bin/env bash
+# Pré-push : refuse le push si un check échoue (mêmes checks que la CI).
+set -euo pipefail
+
+echo "[pre-push] ruff check…";          uv run ruff check .
+echo "[pre-push] ruff format --check…"; uv run ruff format --check .
+echo "[pre-push] mypy…";                uv run mypy
+echo "[pre-push] pytest…";              uv run pytest
+echo "[pre-push] OK"
+```
+
+- [ ] **Step 2: Rendre le hook exécutable**
+
+Run: `chmod +x .githooks/pre-push`
+
+- [ ] **Step 3: Créer le script d'installation dev**
+
+`scripts/setup-dev.sh` :
+```bash
+#!/usr/bin/env bash
+# Setup dev : active les hooks Git du repo + installe l'environnement.
+set -euo pipefail
+
+git config core.hooksPath .githooks
+uv sync --dev
+echo "Environnement dev prêt. Hooks Git activés (core.hooksPath=.githooks)."
+```
+
+- [ ] **Step 4: Rendre le script exécutable**
+
+Run: `chmod +x scripts/setup-dev.sh`
+
+- [ ] **Step 5: Activer les hooks et installer l'environnement**
+
+Run: `./scripts/setup-dev.sh`
+Expected: règle `core.hooksPath` sur `.githooks`, `uv sync` réussit, message de fin affiché.
+
+- [ ] **Step 6: Vérifier que le hook s'exécute et passe**
+
+Run: `bash .githooks/pre-push`
+Expected: exécute les 4 checks, tous verts, sort en code 0 et affiche `[pre-push] OK`.
+
+- [ ] **Step 7: Vérifier que `core.hooksPath` est bien configuré**
+
+Run: `git config --get core.hooksPath`
+Expected: affiche `.githooks`.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add .githooks/pre-push scripts/setup-dev.sh
+git commit -m "chore: add pre-push hook running CI checks + dev setup script"
+```
+
+---
+
+## Task 6: README multi-audience
+
+**Files:**
+- Create: `README.md`
+
+- [ ] **Step 1: Écrire le README** *(fence à 4 backticks car le contenu contient des blocs ```bash```)*
+
+`README.md` :
+````markdown
+# emule-indexer
+
+Retrouver le *lost media* **Keroro mission Titar (VF)** en surveillant eMule en continu,
+et cataloguer un maximum de métadonnées au passage.
+
+## Pourquoi ce projet
+
+Une grande partie du doublage français de *Keroro mission Titar* (diffusé sur Teletoon en 2008)
+est perdue. Les épisodes réapparaissent **par intermittence** sur le réseau eMule, quand un
+détenteur se connecte ; une recherche manuelle ponctuelle les rate presque toujours.
+**emule-indexer** transforme ce hasard en **surveillance permanente et distribuée** : plusieurs
+chercheurs font tourner un nœud, chacun cherche en continu, catalogue ce qu'il voit, et alerte
+quand un épisode manquant apparaît.
+
+> Éthique : le sujet du catalogue est **le fichier**, pas la personne. Pas de pistage ni de
+> désanonymisation — uniquement retrouver des épisodes perdus.
+
+## Pour les chercheurs (faire tourner un nœud)
+
+Le mode **observer** ne télécharge rien : il cherche, catalogue et notifie (avec un lien
+`ed2k://` pour récupérer un fichier d'un clic). Portable (Linux, macOS, Windows via Docker
+Desktop), sans configuration réseau particulière.
+
+> ⚙️ Le packaging `docker compose` arrive dans un incrément ultérieur (voir la feuille de route).
+> Le projet en est aux **fondations** (voir « Pour les développeurs »).
+
+## Pour les curieux (comment ça marche)
+
+1. Le nœud parle le protocole eMule (eD2k + Kad) via un client aMule piloté en interne.
+2. Il lance en continu des recherches dérivées d'une liste d'épisodes cibles.
+3. Chaque résultat est **scoré** contre cette liste (titres, numéros, dates de diffusion…).
+4. Selon la confiance : on catalogue, on notifie, ou (mode complet) on télécharge dans un
+   environnement **isolé**, sans jamais re-partager ni exécuter le contenu.
+5. Les catalogues de plusieurs chercheurs **fusionnent** sans conflit (chaque fichier est
+   identifié par son empreinte de contenu).
+
+## Pour les développeurs
+
+- **Stack** : Python (`uv`), architecture Clean/Hexagonal, `mypy --strict`, `ruff`, `pytest`.
+- **TDD strict** : les tests sont la spec ; aucun code de prod avant les tests ; **coverage 100 %
+  imposé** (branch).
+
+### Démarrer
+```bash
+git clone <repo> && cd emule-indexer
+./scripts/setup-dev.sh   # active les hooks Git (core.hooksPath) + installe l'env (uv sync)
+uv run pytest
+```
+
+> Les **hooks Git ne sont pas activés automatiquement au clone** (sécurité Git) : `setup-dev.sh`
+> règle `core.hooksPath=.githooks`. Le hook **pré-push** rejoue les checks de la CI (ruff,
+> format, mypy, pytest) — un push ne part pas si un check échoue.
+
+### Conception
+- Spec : [`docs/superpowers/specs/2026-06-10-crawler-mvp-design.md`](docs/superpowers/specs/2026-06-10-crawler-mvp-design.md)
+- Plans d'implémentation : [`docs/superpowers/plans/`](docs/superpowers/plans/)
+
+## Statut
+
+🚧 En construction — fondations posées (toolchain, CI, normalisation). Feuille de route
+détaillée dans la spec et les plans.
+````
+
+- [ ] **Step 2: Vérifier que le lien vers la spec est valide**
+
+Run: `test -f docs/superpowers/specs/2026-06-10-crawler-mvp-design.md && echo "spec link ok"`
+Expected: affiche `spec link ok`.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add README.md
+git commit -m "docs: add multi-audience README"
+```
+
+---
+
 ## Self-Review (rempli par l'auteur du plan)
 
-- **Couverture de la spec (périmètre Plan 1)** : stack & outillage §15 → Task 1 ✓ ; coverage imposé §16 → `--cov-fail-under=100` (Task 1) ✓ ; normalisation NFKD §8.1 → Tasks 2-3 ✓ ; squelette Clean Archi §4 (domaine pur) → `domain/` ✓ ; TDD §16 → toutes les tâches en cycle test-d'abord ✓. *(Hors périmètre, couvert par les plans 2-8 : ports/adapters, EC, DB, scheduler, download/verifier, observabilité, packaging.)*
-- **Placeholders** : aucun « TBD/TODO » ; tout le code et toutes les commandes sont explicites.
-- **Cohérence des types** : `normalize(value: str) -> str` et `tokenize(value: str) -> list[str]` cohérents entre tâches et tests ; noms de modules/fonctions identiques partout.
+- **Couverture de la spec (périmètre Plan 1)** : stack & outillage §15 → Task 1 ✓ ; coverage imposé §16 → `--cov-fail-under=100` (Task 1) ✓ ; normalisation NFKD §8.1 → Tasks 2-3 ✓ ; squelette Clean Archi §4 (domaine pur) → `domain/` ✓ ; TDD §16 → toutes les tâches en cycle test-d'abord ✓ ; **hooks pré-push (exigence utilisateur, mêmes checks que la CI, installés via `core.hooksPath`)** → Task 5 ✓ ; **README multi-audience** → Task 6 ✓. *(Hors périmètre, couvert par les plans 2-8 : ports/adapters, EC, DB, scheduler, download/verifier, observabilité, packaging.)*
+- **Placeholders** : aucun « TBD/TODO » ; tout le code et toutes les commandes sont explicites. *(`<repo>` dans le README est volontairement l'URL de clone à substituer par l'utilisateur.)*
+- **Cohérence des types** : `normalize(value: str) -> str` et `tokenize(value: str) -> list[str]` cohérents entre tâches et tests ; noms de modules/fonctions identiques partout. Les checks du hook pré-push (Task 5) sont identiques à ceux de la CI (Task 4).
