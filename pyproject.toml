@@ -3,7 +3,10 @@ name = "emule-indexer"
 version = "0.0.0"
 description = "Surveillance eMule pour retrouver le lost media Keroro VF"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "google-re2>=1.1.20251105",
+    "rapidfuzz>=3.14.5",
+]
 
 [dependency-groups]
 dev = [
