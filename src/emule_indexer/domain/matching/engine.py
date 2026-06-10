@@ -10,6 +10,10 @@ d'un adapter d'un plan ultérieur.
 
 from dataclasses import dataclass
 
+from emule_indexer.domain.matching.config import MatcherConfig
+from emule_indexer.domain.matching.models import FileCandidate
+from emule_indexer.domain.matching.resolver import ResolvedTarget
+
 
 @dataclass(frozen=True)
 class Explanation:
@@ -48,3 +52,20 @@ class MatchDecision:
 # Entier croissant = palier plus haut. `TIERS` (config) donne l'ensemble LICITE ; ce
 # rang donne l'ORDRE de décision. Un test vérifie set(_TIER_RANK) == TIERS.
 _TIER_RANK: dict[str, int] = {"catalog": 0, "notify": 1, "download": 2}
+
+
+def _first_matching_rule(
+    config: MatcherConfig,
+    resolved: ResolvedTarget,
+    candidate: FileCandidate,
+) -> tuple[int, str, str] | None:
+    """1re règle vraie pour (candidate, cible résolue) → ``(index, nom, tier)`` (§8.5).
+
+    Parcourt ``config.rules`` DANS L'ORDRE (l'index = la position = la priorité) ; pour
+    chaque règle, évalue l'arbre déjà construit ``resolved.rules[rule.name]``. Renvoie le
+    1er match ; ``None`` si aucune règle ne matche (la cible ne contribue rien).
+    """
+    for index, rule in enumerate(config.rules):
+        if resolved.rules[rule.name].matches(candidate):
+            return (index, rule.name, rule.tier)
+    return None

@@ -1,9 +1,18 @@
 import dataclasses
+import datetime
 
 import pytest
 
-from emule_indexer.domain.matching.config import TIERS
-from emule_indexer.domain.matching.engine import _TIER_RANK, Explanation, MatchDecision
+from emule_indexer.domain.matching.config import TIERS, MatcherConfig
+from emule_indexer.domain.matching.engine import (
+    _TIER_RANK,
+    Explanation,
+    MatchDecision,
+    _first_matching_rule,
+)
+from emule_indexer.domain.matching.models import FileCandidate, TargetSegment
+from emule_indexer.domain.matching.resolver import MatcherResolver, ResolvedTarget
+from emule_indexer.domain.matching.validation import parse_matcher_config
 
 
 def test_tier_rank_orders_download_above_notify_above_catalog() -> None:
@@ -56,3 +65,51 @@ def test_match_decision_is_frozen_and_holds_persisted_columns_plus_explanation()
     assert decision.explanation is explanation
     with pytest.raises(dataclasses.FrozenInstanceError):
         decision.tier = "notify"  # type: ignore[misc]
+
+
+_TARGET_62A = TargetSegment(
+    season=2,
+    number=62,
+    segment="a",
+    title="Les demoiselles cambrioleuses",
+    broadcast_date=datetime.date(2008, 9, 21),
+    status="partial",
+)
+
+# Config minimale à deux règles d'index distinct pour exercer "1re vraie" et "boucle".
+_TWO_RULE_RAW: dict[str, object] = {
+    "tokens": {
+        "is_video": {"regex": r"\.(avi|mkv)$"},
+        "seg": {"regex": r"n[°o]?\s*0*{number}\s*{segment}"},
+        "keroro": {"keyword": "keroro"},
+    },
+    "rules": [
+        {"name": "exact", "tier": "download", "all": ["is_video", "seg"]},
+        {"name": "large", "tier": "catalog", "any": ["keroro"]},
+    ],
+}
+
+
+def _resolve(raw: dict[str, object], target: TargetSegment) -> tuple[MatcherConfig, ResolvedTarget]:
+    config = parse_matcher_config(raw)
+    resolved = MatcherResolver(config).resolve_all(target)
+    return config, resolved
+
+
+def test_first_matching_rule_returns_index_zero_when_first_rule_true() -> None:
+    config, resolved = _resolve(_TWO_RULE_RAW, _TARGET_62A)
+    candidate = FileCandidate(filename="Keroro N°062A.avi")
+    assert _first_matching_rule(config, resolved, candidate) == (0, "exact", "download")
+
+
+def test_first_matching_rule_skips_to_later_rule_when_first_false() -> None:
+    config, resolved = _resolve(_TWO_RULE_RAW, _TARGET_62A)
+    # Pas vidéo + pas de segment 062A -> "exact" faux ; "keroro" vrai -> 2e règle.
+    candidate = FileCandidate(filename="keroro autre chose.txt")
+    assert _first_matching_rule(config, resolved, candidate) == (1, "large", "catalog")
+
+
+def test_first_matching_rule_returns_none_when_no_rule_true() -> None:
+    config, resolved = _resolve(_TWO_RULE_RAW, _TARGET_62A)
+    candidate = FileCandidate(filename="naruto 062.txt")
+    assert _first_matching_rule(config, resolved, candidate) is None
