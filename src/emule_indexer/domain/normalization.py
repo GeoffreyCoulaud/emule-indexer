@@ -15,3 +15,8 @@ def normalize(value: str) -> str:
     lowered = without_marks.lower()
     cleaned = "".join(ch if ch.isalnum() else " " for ch in lowered)
     return " ".join(cleaned.split())
+
+
+def tokenize(value: str) -> list[str]:
+    """Tokens significatifs d'une chaîne, après normalisation."""
+    return normalize(value).split()
