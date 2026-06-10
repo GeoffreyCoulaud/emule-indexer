@@ -35,6 +35,10 @@ python_version = "3.12"
 strict = true
 files = ["src", "tests"]
 
+[[tool.mypy.overrides]]
+module = "re2"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 addopts = "--cov=emule_indexer --cov-report=term-missing --cov-fail-under=100 --strict-markers"
 testpaths = ["tests"]
