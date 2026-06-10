@@ -145,8 +145,10 @@ class MatchingEngine:
             if outcome is None:
                 continue
             index, rule_name, tier = outcome
-            # Clé de tri : palier le plus HAUT d'abord (-rang), puis index le plus PETIT,
-            # puis target_id le plus PETIT. min() sur cette clé donne le gagnant.
+            # Clé de tri : palier le plus HAUT (-rang), puis index de règle le plus PETIT,
+            # puis target_id le plus PETIT. target_id étant UNIQUE (garanti fail-fast par
+            # parse_targets), la clé est un ordre total strict -> gagnant unique, indépendant
+            # de l'ordre des cibles (cf. propriété P1).
             key = (-_TIER_RANK[tier], index, resolved.target.target_id)
             if best is None or key < best:
                 best = key

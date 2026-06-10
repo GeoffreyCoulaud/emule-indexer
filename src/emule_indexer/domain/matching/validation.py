@@ -398,4 +398,15 @@ def parse_targets(raw: dict[str, Any]) -> tuple[TargetSegment, ...]:
                     aliases=aliases,
                 )
             )
-    return tuple(segments)
+    result = tuple(segments)
+    seen: set[str] = set()
+    for segment in result:
+        if segment.target_id in seen:
+            raise ConfigError(
+                f"target_id en double : {segment.target_id!r} — les segments cibles doivent "
+                f"être uniques (note : la lettre de segment est mise en majuscule par target_id, "
+                f"donc 'a' et 'A' collisionnent). Le moteur d'évaluation en dépend (départage "
+                f"déterministe)."
+            )
+        seen.add(segment.target_id)
+    return result

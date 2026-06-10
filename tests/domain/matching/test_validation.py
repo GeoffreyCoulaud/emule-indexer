@@ -417,6 +417,25 @@ def test_empty_config_validates() -> None:
     assert config.tokens == {}
 
 
+def test_parse_targets_duplicate_target_id_raises() -> None:
+    # 'a' et 'A' -> même target_id S2E062A : rejet fail-fast (le moteur exige l'unicité).
+    with pytest.raises(ConfigError, match="double"):
+        parse_targets(
+            {
+                "episodes": [
+                    {
+                        "season": 2,
+                        "number": 62,
+                        "segments": [
+                            {"letter": "a", "title": "x"},
+                            {"letter": "A", "title": "y"},
+                        ],
+                    }
+                ]
+            }
+        )
+
+
 def test_coverage_override_forward_reference_in_composite_validates() -> None:
     # Régression : un token composite référençant {token: cov, min: …} où cov est
     # défini APRÈS ne doit PAS être rejeté (validation override différée au graphe).
