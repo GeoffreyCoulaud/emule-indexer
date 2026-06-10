@@ -1,6 +1,7 @@
 """Matchers feuilles du moteur de matching (cf. spec §8.2)."""
 
 import re2
+from rapidfuzz import fuzz
 
 from emule_indexer.domain.matching.models import FileCandidate
 from emule_indexer.domain.normalization import fold, tokenize
@@ -45,3 +46,52 @@ class RegexMatcher:
 
     def matches(self, candidate: FileCandidate) -> bool:
         return self._re.search(fold(candidate.filename)) is not None
+
+
+# Mots-vides français (déjà repliés par tokenize) exclus des tokens significatifs
+# de la référence d'un CoverageMatcher (cf. spec §8.2 : R = tokens(title) \ stopwords).
+# Ensemble volontairement minimal : sous-filtrer favorise le rappel (mieux vaut
+# garder un mot limite que retirer un token significatif).
+STOPWORDS_FR: frozenset[str] = frozenset(
+    {
+        "le",
+        "la",
+        "les",
+        "l",
+        "de",
+        "des",
+        "du",
+        "d",
+        "un",
+        "une",
+        "et",
+        "a",
+        "au",
+        "aux",
+        "en",
+    }
+)
+
+
+class CoverageMatcher:
+    """Fraction fuzzy des tokens significatifs de ``reference`` couverts (cf. spec §8.2)."""
+
+    def __init__(self, reference: str, min: float, fuzz: float = 0.85) -> None:
+        self._reference_tokens = [t for t in tokenize(reference) if t not in STOPWORDS_FR]
+        self._min = min
+        self._fuzz = fuzz
+
+    def value(self, candidate: FileCandidate) -> float:
+        reference_tokens = self._reference_tokens
+        if not reference_tokens:
+            return 0.0
+        candidate_tokens = tokenize(candidate.filename)
+        hits = sum(
+            1
+            for r in reference_tokens
+            if any(fuzz.ratio(r, f) / 100 >= self._fuzz for f in candidate_tokens)
+        )
+        return hits / len(reference_tokens)
+
+    def matches(self, candidate: FileCandidate) -> bool:
+        return self.value(candidate) >= self._min

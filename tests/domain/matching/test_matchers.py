@@ -1,4 +1,4 @@
-from emule_indexer.domain.matching.matchers import KeywordMatcher, RegexMatcher
+from emule_indexer.domain.matching.matchers import CoverageMatcher, KeywordMatcher, RegexMatcher
 from emule_indexer.domain.matching.models import FileCandidate
 
 
@@ -59,3 +59,49 @@ def test_regex_uppercase_pattern_without_i_flag_does_not_match_folded_input() ->
     # fold() minusculise déjà ; un pattern en MAJUSCULES sans (?i) ne matche pas.
     matcher = RegexMatcher("TELETOON", flags="")
     assert matcher.matches(FileCandidate(filename="Keroro Télétoon.avi")) is False
+
+
+def test_coverage_exact_title_is_one_and_matches() -> None:
+    matcher = CoverageMatcher("Les demoiselles cambrioleuses", min=0.6)
+    candidate = FileCandidate(filename="Keroro 062A Les demoiselles cambrioleuses.avi")
+    assert matcher.value(candidate) == 1.0
+    assert matcher.matches(candidate) is True
+
+
+def test_coverage_one_typo_within_fuzz_still_matches() -> None:
+    matcher = CoverageMatcher("Les demoiselles cambrioleuses", min=0.6)
+    # "demoiseles" (un 'l' manquant) reste >= fuzz 0.85 vs "demoiselles".
+    candidate = FileCandidate(filename="demoiseles cambrioleuses.avi")
+    assert matcher.value(candidate) == 1.0
+    assert matcher.matches(candidate) is True
+
+
+def test_coverage_unrelated_is_zero_and_no_match() -> None:
+    matcher = CoverageMatcher("Les demoiselles cambrioleuses", min=0.6)
+    candidate = FileCandidate(filename="totalement autre chose.mkv")
+    assert matcher.value(candidate) == 0.0
+    assert matcher.matches(candidate) is False
+
+
+def test_coverage_empty_reference_is_zero() -> None:
+    # Référence faite uniquement de stopwords -> aucun token significatif -> 0.0.
+    matcher = CoverageMatcher("les des un une", min=0.6)
+    candidate = FileCandidate(filename="les demoiselles.avi")
+    assert matcher.value(candidate) == 0.0
+    assert matcher.matches(candidate) is False
+
+
+def test_coverage_partial_fraction_at_min_boundary_matches() -> None:
+    # 1 token significatif couvert sur 2 -> value 0.5 ; min=0.5 -> match (>= inclusif).
+    matcher = CoverageMatcher("demoiselles cambrioleuses", min=0.5)
+    candidate = FileCandidate(filename="demoiselles autre.avi")
+    assert matcher.value(candidate) == 0.5
+    assert matcher.matches(candidate) is True
+
+
+def test_coverage_partial_fraction_below_min_does_not_match() -> None:
+    # Même value 0.5 mais min=0.6 -> sous le seuil -> pas de match (value non nulle).
+    matcher = CoverageMatcher("demoiselles cambrioleuses", min=0.6)
+    candidate = FileCandidate(filename="demoiselles autre.avi")
+    assert matcher.value(candidate) == 0.5
+    assert matcher.matches(candidate) is False
