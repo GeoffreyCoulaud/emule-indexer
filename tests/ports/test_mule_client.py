@@ -1,0 +1,83 @@
+import dataclasses
+
+import pytest
+
+from emule_indexer.domain.observation import FileObservation
+from emule_indexer.ports.mule_client import (
+    KadStatus,
+    MuleClient,
+    NetworkStatus,
+    SearchChannel,
+)
+
+
+def test_search_channel_is_the_closed_global_kad_enum() -> None:
+    assert {channel.value for channel in SearchChannel} == {"global", "kad"}
+    assert SearchChannel("global") is SearchChannel.GLOBAL
+    assert SearchChannel("kad") is SearchChannel.KAD
+
+
+def test_kad_status_is_the_closed_four_state_enum() -> None:
+    # Réf. §6 : ni 0x10 -> arrêté ; 0x10 seul -> tourne ; |0x04 -> connecté ; |0x08 -> firewalled.
+    assert {status.value for status in KadStatus} == {"off", "running", "connected", "firewalled"}
+
+
+def test_network_status_is_frozen_and_holds_fields() -> None:
+    status = NetworkStatus(
+        ed2k_id=33554433,
+        ed2k_high=True,
+        kad_status=KadStatus.CONNECTED,
+        server_name="TestServer",
+        server_addr="1.2.3.4:4661",
+    )
+    assert status.ed2k_id == 33554433
+    assert status.ed2k_high is True
+    assert status.kad_status is KadStatus.CONNECTED
+    assert status.server_name == "TestServer"
+    assert status.server_addr == "1.2.3.4:4661"
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        status.ed2k_high = False  # type: ignore[misc]
+
+
+def test_network_status_server_fields_default_to_none() -> None:
+    status = NetworkStatus(ed2k_id=None, ed2k_high=False, kad_status=KadStatus.OFF)
+    assert status.server_name is None
+    assert status.server_addr is None
+
+
+class _StubClient:
+    """Implémentation structurelle minimale : satisfait MuleClient SANS l'importer."""
+
+    async def connect(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+    async def start_search(self, keyword: str, channel: SearchChannel) -> None:
+        return None
+
+    async def fetch_results(self) -> tuple[FileObservation, ...]:
+        return ()
+
+    async def stop_search(self) -> None:
+        return None
+
+    async def search_progress(self) -> int | None:
+        return None
+
+    async def network_status(self) -> NetworkStatus:
+        return NetworkStatus(ed2k_id=None, ed2k_high=False, kad_status=KadStatus.OFF)
+
+
+@pytest.mark.asyncio
+async def test_stub_client_satisfies_mule_client_protocol() -> None:
+    # L'annotation `MuleClient` force mypy à vérifier la compatibilité STRUCTURELLE.
+    client: MuleClient = _StubClient()
+    await client.connect()
+    await client.start_search("keroro", SearchChannel.GLOBAL)
+    assert await client.fetch_results() == ()
+    assert await client.search_progress() is None
+    assert (await client.network_status()).kad_status is KadStatus.OFF
+    await client.stop_search()
+    await client.close()
