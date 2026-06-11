@@ -14,6 +14,7 @@ contre le homelab.
 import argparse
 import asyncio
 import math
+import os
 import sys
 from collections.abc import Awaitable, Callable, Sequence
 
@@ -26,13 +27,25 @@ Sleeper = Callable[[float], Awaitable[None]]
 ClientFactory = Callable[[argparse.Namespace], MuleClient]
 
 
+def _positive_float(text: str) -> float:
+    """``type=`` argparse : flottant strictement positif, sinon sortie propre (code 2)."""
+    value = float(text)
+    if value <= 0:
+        raise argparse.ArgumentTypeError(f"doit être strictement positif : {text!r}")
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ec_probe", description="Sonde EC : recherche réelle + dump des tags reçus"
     )
     parser.add_argument("--host", default="127.0.0.1", help="hôte amuled")
     parser.add_argument("--port", type=int, default=4712, help="port EC (ECPort)")
-    parser.add_argument("--password", required=True, help="mot de passe EC (en clair)")
+    parser.add_argument(
+        "--password",
+        default=os.environ.get("EC_PROBE_PASSWORD"),
+        help="mot de passe EC (en clair ; défaut : variable d'environnement EC_PROBE_PASSWORD)",
+    )
     parser.add_argument("--keyword", required=True, help="mot-clé de recherche")
     parser.add_argument(
         "--channel",
@@ -40,8 +53,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=SearchChannel.GLOBAL.value,
         help="canal de recherche",
     )
-    parser.add_argument("--timeout", type=float, default=60.0, help="budget total de polling (s)")
-    parser.add_argument("--interval", type=float, default=5.0, help="intervalle entre relevés (s)")
+    parser.add_argument(
+        "--timeout", type=_positive_float, default=60.0, help="budget total de polling (s)"
+    )
+    parser.add_argument(
+        "--interval", type=_positive_float, default=5.0, help="intervalle entre relevés (s)"
+    )
     return parser
 
 
@@ -58,13 +75,15 @@ def format_status(status: NetworkStatus) -> str:
 
 
 def format_observation(observation: FileObservation) -> str:
+    # Noms de fichiers et valeurs de tags = entrée hostile (retours à la ligne, contrôle…) :
+    # repr() garantit « un enregistrement = une ligne non ambiguë ».
     lines = [
-        f"[probe] {observation.filename}",
+        f"[probe] {observation.filename!r}",
         f"  hash={observation.ed2k_hash} taille={observation.size_bytes} o",
         f"  sources={observation.source_count} complètes={observation.complete_source_count}",
     ]
     for name, value in observation.raw_meta:
-        lines.append(f"  raw {name} = {value}")
+        lines.append(f"  raw {name} = {value!r}")
     return "\n".join(lines)
 
 
@@ -85,19 +104,21 @@ async def search_and_wait(
     await client.start_search(keyword, channel)
     rounds = max(1, math.ceil(timeout / interval))
     results: tuple[FileObservation, ...] = ()
-    for round_index in range(rounds):
-        results = await client.fetch_results()
-        progress = await client.search_progress()
-        shown = "?" if progress is None else f"{progress}%"
-        print(
-            f"[probe] relevé {round_index + 1}/{rounds} : "
-            f"{len(results)} résultat(s), progression {shown}"
-        )
-        if progress == 100:
-            break
-        if round_index < rounds - 1:
-            await sleep(interval)
-    await client.stop_search()
+    try:
+        for round_index in range(rounds):
+            results = await client.fetch_results()
+            progress = await client.search_progress()
+            shown = "?" if progress is None else f"{progress}%"
+            print(
+                f"[probe] relevé {round_index + 1}/{rounds} : "
+                f"{len(results)} résultat(s), progression {shown}"
+            )
+            if progress == 100:
+                break
+            if round_index < rounds - 1:
+                await sleep(interval)
+    finally:
+        await client.stop_search()
     return results
 
 
@@ -130,9 +151,15 @@ def _default_client(args: argparse.Namespace) -> MuleClient:
 def main(
     argv: Sequence[str] | None = None, *, client_factory: ClientFactory = _default_client
 ) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.password is None:
+        parser.error("mot de passe requis (--password ou EC_PROBE_PASSWORD)")
     try:
         return asyncio.run(run_probe(client_factory(args), args))
+    except KeyboardInterrupt:
+        print("[probe] interrompu", file=sys.stderr)
+        return 130
     except EcError as exc:
         print(f"[probe] ERREUR : {exc}", file=sys.stderr)
         return 1
