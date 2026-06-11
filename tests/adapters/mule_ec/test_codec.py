@@ -183,7 +183,7 @@ def test_encode_packet_produces_the_exact_auth_req_frame() -> None:
 
 
 # Trame SEARCH_RESULTS imbriquée, dérivée de la réf. §2 (TAGLEN, piège 3) et §5 :
-#   parent : TAGNAME 0x0E01 (= 0x0700 SEARCHFILE << 1 | 1 enfants), TAGTYPE 0x02 (UINT8 :
+#   parent : TAGNAME 0x0E01 (= EC_TAG_SEARCHFILE (0x0700) << 1 | 1 enfants), TAGTYPE 0x02 (UINT8 :
 #            ECID=1 émis au plus court), TAGLEN 0x52 (82), TAGCOUNT 0x0006
 #   TAGLEN parent = valeur propre (1) + Σ enfants (TAGLEN + 7 d'en-tête chacun, aucun
 #   petit-enfant donc pas de +2) = 1 + (16+7)+(4+7)+(16+7)+(1+7)+(1+7)+(1+7) = 82
@@ -237,3 +237,24 @@ def test_encode_packet_with_no_tags_is_the_minimal_frame() -> None:
     # NOOP sans tag : payload = opcode (1) + TAGCOUNT 0x0000 (2) = 3 octets.
     expected = bytes.fromhex("00000020" "00000003" "01" "0000")  # fmt: skip
     assert encode_packet(EcPacket(codes.EC_OP_NOOP)) == expected
+
+
+def test_encode_packet_counts_grandchildren_in_taglen() -> None:
+    # Profondeur 3 (réf. §2, GetTagLen) : le TAGLEN d'un parent compte la taille sérialisée
+    # COMPLÈTE de chaque enfant, Y COMPRIS le TAGCOUNT (2 octets) d'un enfant qui a lui-même
+    # des enfants. leaf = 7+1 = 8 ; middle = 7+2+(1+8) = 18 ; TAGLEN(grand) = 1+18 = 19 = 0x13 ;
+    # payload = 1+2+(7+2+19) = 31 = 0x1F.
+    leaf = uint_tag(0x030A, 5)
+    middle = EcTag(0x0301, codes.EC_TAGTYPE_UINT8, b"\x02", (leaf,))
+    grand = EcTag(0x0700, codes.EC_TAGTYPE_UINT8, b"\x01", (middle,))
+    # fmt: off
+    expected = bytes.fromhex(
+        "00000020" "0000001f"
+        "07" "0001"
+        "0e01" "02" "00000013" "0001"
+        "0603" "02" "00000009" "0001"
+        "0614" "02" "00000001" "05"
+        "02" "01"
+    )
+    # fmt: on
+    assert encode_packet(EcPacket(codes.EC_OP_MISC_DATA, (grand,))) == expected
