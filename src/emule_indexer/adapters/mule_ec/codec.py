@@ -163,9 +163,16 @@ class _Reader:
     def exhausted(self) -> bool:
         return self._pos == len(self._data)
 
+    @property
+    def position(self) -> int:
+        return self._pos
+
     def take(self, count: int) -> bytes:
         if self._pos + count > len(self._data):
-            raise EcProtocolError("paquet EC tronqué")
+            raise EcProtocolError(
+                f"paquet EC tronqué : lecture de {count} octets à l'offset {self._pos}, "
+                f"reste {len(self._data) - self._pos}"
+            )
         chunk = self._data[self._pos : self._pos + count]
         self._pos += count
         return chunk
@@ -207,7 +214,10 @@ def _inflate(data: bytes) -> bytes:
 
 def _decode_tag(reader: _Reader, depth: int) -> EcTag:
     """Décode un tag (réf. §2) : ``TAGNAME >> 1``, enfants AVANT la valeur propre,
-    valeur propre = ``TAGLEN - Σ(taille sérialisée des enfants)`` (ECTag.cpp:436-438)."""
+    valeur propre = ``TAGLEN - Σ(taille sérialisée des enfants)`` (ECTag.cpp:436-438).
+
+    La taille des enfants est mesurée par DELTA DE POSITION du curseur (consommation wire
+    réelle), jamais recalculée sur l'arbre décodé : tout octet lu doit être compté."""
     if depth >= _MAX_TAG_DEPTH:
         raise EcProtocolError("imbrication de tags trop profonde")
     wire_name = reader.read_u16()
@@ -219,12 +229,13 @@ def _decode_tag(reader: _Reader, depth: int) -> EcTag:
     children_size = 0
     if has_children:
         count = reader.read_u16()
-        decoded = []
-        for _ in range(count):
-            child = _decode_tag(reader, depth + 1)
-            children_size += _serialized_len(child)
-            decoded.append(child)
-        children = tuple(decoded)
+        if count == 0:
+            # L'encodeur aMule ne pose le bit enfants que s'il existe des sous-tags ;
+            # accepter cette forme ferait absorber les 2 octets de TAGCOUNT à la valeur.
+            raise EcProtocolError(f"tag 0x{name:04X} : bit enfants sans TAGCOUNT")
+        pos_before = reader.position
+        children = tuple(_decode_tag(reader, depth + 1) for _ in range(count))
+        children_size = reader.position - pos_before
     own_len = tag_len - children_size
     if own_len < 0:
         raise EcProtocolError(f"TAGLEN menteur sur le tag 0x{name:04X}")

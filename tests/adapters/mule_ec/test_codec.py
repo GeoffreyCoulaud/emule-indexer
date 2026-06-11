@@ -373,6 +373,33 @@ def test_decode_packet_rejects_frame_length_mismatch() -> None:
         decode_packet(_AUTH_REQ_FRAME[:-1])  # un octet manquant par rapport à l'en-tête
 
 
+def test_decode_rejects_children_bit_set_with_zero_tagcount() -> None:
+    # Bit enfants (TAGNAME & 1) posé mais TAGCOUNT=0 : l'encodeur aMule ne pose le bit que
+    # s'il existe des sous-tags. Accepter cette forme ferait diverger TAGLEN de la
+    # consommation wire réelle (2 octets de TAGCOUNT lus mais non recomptés sur l'arbre
+    # normalisé) → le tag absorberait silencieusement 2 octets appartenant à la suite.
+    # payload : 01 | 0001 | 0603 06 00000003 0000 | 414200  (15 octets = 0x0F)
+    #   tag : TAGNAME 0x0603 (= 0x0301 NAME << 1 | bit enfants), STRING, TAGLEN=3,
+    #         TAGCOUNT=0x0000 (interdit), valeur "AB\0"
+    # fmt: off
+    frame = bytes.fromhex(
+        "00000020" "0000000f" "01" "0001" "0603" "06" "00000003" "0000" "414200"
+    )
+    # fmt: on
+    with pytest.raises(EcProtocolError, match="bit enfants sans TAGCOUNT"):
+        decode_packet(frame)
+    # Variante de la sur-lecture démontrée : 2 octets de garbage (qui devaient mourir en
+    # « octets résiduels ») étaient absorbés dans la valeur du tag.
+    # payload : 01 | 0001 | 0603 06 00000002 0000 | ffff  (14 octets = 0x0E)
+    # fmt: off
+    absorbing = bytes.fromhex(
+        "00000020" "0000000e" "01" "0001" "0603" "06" "00000002" "0000" "ffff"
+    )
+    # fmt: on
+    with pytest.raises(EcProtocolError, match="bit enfants sans TAGCOUNT"):
+        decode_packet(absorbing)
+
+
 def _nested_empty_tags(levels: int) -> EcTag:
     tag = empty_tag(0x0999)
     for _ in range(levels - 1):
@@ -404,14 +431,14 @@ def test_decode_inflates_a_valid_zlib_frame() -> None:
 def test_decode_rejects_corrupt_zlib_stream() -> None:
     frame = _zlib_frame(_SEARCH_RESULT_FRAME[8:])
     corrupted = frame[:8] + b"\x00\x00" + frame[10:]  # écrase l'en-tête zlib
-    with pytest.raises(EcProtocolError, match="zlib"):
+    with pytest.raises(EcProtocolError, match="corrompu"):
         decode_packet(corrupted)
 
 
 def test_decode_rejects_truncated_zlib_stream() -> None:
     compressed = zlib.compress(_SEARCH_RESULT_FRAME[8:])[:-4]  # flux valide mais incomplet
     frame = bytes.fromhex("00000021") + len(compressed).to_bytes(4, "big") + compressed
-    with pytest.raises(EcProtocolError, match="zlib"):
+    with pytest.raises(EcProtocolError, match="hors borne|tronqué"):
         decode_packet(frame)
 
 
@@ -419,5 +446,22 @@ def test_decode_rejects_zlib_bomb_beyond_the_decompression_bound() -> None:
     # 16 Mio + 1 de zéros compressés en ~16 Kio : la décompression BORNÉE refuse (DÉCISION 3).
     bomb = zlib.compress(b"\x00" * (16 * 1024 * 1024 + 1))
     frame = bytes.fromhex("00000021") + len(bomb).to_bytes(4, "big") + bomb
-    with pytest.raises(EcProtocolError, match="zlib"):
+    with pytest.raises(EcProtocolError, match="hors borne|tronqué"):
         decode_packet(frame)
+
+
+def test_decode_accepts_inflation_to_exactly_the_decompression_bound() -> None:
+    # DÉCISION 3 : chaque borne est testée DES DEUX CÔTÉS. Un payload EC valide d'exactement
+    # 16 Mio : opcode (1) + TAGCOUNT (2) + en-tête de tag (7) + valeur propre de 16 Mio - 10.
+    own = 16 * 1024 * 1024 - 10
+    # fmt: off
+    payload = (
+        bytes([codes.EC_OP_MISC_DATA]) + (1).to_bytes(2, "big")
+        + (0x0999 << 1).to_bytes(2, "big") + bytes([codes.EC_TAGTYPE_CUSTOM])
+        + own.to_bytes(4, "big") + b"\x00" * own
+    )
+    # fmt: on
+    packet = decode_packet(_zlib_frame(payload))
+    assert packet == EcPacket(
+        codes.EC_OP_MISC_DATA, (EcTag(0x0999, codes.EC_TAGTYPE_CUSTOM, b"\x00" * own),)
+    )
