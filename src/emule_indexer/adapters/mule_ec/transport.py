@@ -6,6 +6,7 @@ signale, l'appelant décide (spec §3/§6). FCFS strict : une réponse par requ�
 """
 
 import asyncio
+import contextlib
 
 from emule_indexer.adapters.mule_ec.codec import (
     EcPacket,
@@ -37,15 +38,24 @@ class EcTransport:
             raise EcConnectError(f"connexion perdue à l'écriture : {exc}") from exc
 
     async def receive_packet(self) -> EcPacket:
-        """Lit EXACTEMENT un paquet : en-tête 8 octets, puis ``length`` octets de payload."""
+        """Lit EXACTEMENT un paquet : en-tête 8 octets, puis ``length`` octets de payload.
+
+        Après un ``EcTimeoutError``, le flux peut être désynchronisé — jeter le
+        transport et en rouvrir un (pas de re-lecture).
+        """
         header = await self._read_exactly(_HEADER_SIZE)
         flags, length = decode_header(header)
         payload = await self._read_exactly(length)
         return decode_payload(flags, payload)
 
     async def close(self) -> None:
+        """Ferme la connexion. Nettoyage best-effort : une erreur de socket déjà morte
+        est avalée (déviation ASSUMÉE de la lettre de DÉCISION 5 : « signaler » vaut
+        pour les opérations, pas pour le cleanup — un OSError brut ici masquerait
+        l'erreur d'origine dans un bloc finally)."""
         self._writer.close()
-        await self._writer.wait_closed()
+        with contextlib.suppress(OSError):
+            await self._writer.wait_closed()
 
     async def _read_exactly(self, count: int) -> bytes:
         try:

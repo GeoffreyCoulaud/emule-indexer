@@ -66,13 +66,26 @@ async def test_receive_propagates_protocol_error_on_malformed_header() -> None:
 
 
 @pytest.mark.asyncio
+async def test_close_after_connection_reset_does_not_raise() -> None:
+    async with FakeEcServer([], abort=True) as server:  # RST après la requête lue
+        transport = await open_ec_transport("127.0.0.1", server.port, timeout=2.0)
+        await transport.send_packet(_NOOP)
+        with pytest.raises(EcConnectError):
+            await transport.receive_packet()
+        await transport.close()  # ne doit PAS re-lever le ConnectionResetError stocké
+        await transport.close()  # double close : idempotent, ne lève pas non plus
+
+
+@pytest.mark.asyncio
 async def test_connect_refused_raises_connect_error() -> None:
     probe = socket.socket()
-    probe.bind(("127.0.0.1", 0))
-    free_port = probe.getsockname()[1]
-    probe.close()  # le port vient d'être libéré : connexion refusée
-    with pytest.raises(EcConnectError):
-        await open_ec_transport("127.0.0.1", free_port, timeout=2.0)
+    probe.bind(("127.0.0.1", 0))  # lié mais PAS en écoute → RST déterministe (Linux)
+    refused_port = probe.getsockname()[1]
+    try:
+        with pytest.raises(EcConnectError):
+            await open_ec_transport("127.0.0.1", refused_port, timeout=2.0)
+    finally:
+        probe.close()
 
 
 @pytest.mark.asyncio
