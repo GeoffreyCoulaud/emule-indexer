@@ -33,7 +33,8 @@ class NetworkStatus:
     """Statut réseau (spec §4) — exactement ce que les métriques (§13 MVP) consommeront.
 
     ``ed2k_id`` est ``None`` quand le client n'est pas connecté à un serveur eD2k.
-    ``ed2k_high`` : LowID si l'ID < 16777216 (HIGHEST_LOWID_ED2K_KAD, réf. §6).
+    ``ed2k_high`` : ``True`` = HighID (joignable), ``False`` = LowID,
+    c'est-à-dire ID < 16777216 (HIGHEST_LOWID_ED2K_KAD, réf. §6).
     """
 
     ed2k_id: int | None
