@@ -26,6 +26,7 @@ def test_auth_opcodes_and_tags_match_reference() -> None:
     assert codes.EC_OP_AUTH_OK == 0x04
     assert codes.EC_OP_AUTH_SALT == 0x4F
     assert codes.EC_OP_AUTH_PASSWD == 0x50
+    assert codes.EC_TAG_STRING == 0x0000  # porte le message d'erreur (AUTH_FAIL/FAILED)
     assert codes.EC_TAG_PASSWD_HASH == 0x0001
     assert codes.EC_TAG_PROTOCOL_VERSION == 0x0002
     assert codes.EC_TAG_PASSWD_SALT == 0x000B
@@ -79,6 +80,7 @@ def test_connstate_tags_and_bits_match_reference() -> None:
 
 def test_tag_types_match_reference() -> None:
     # Réf. §3 (ECTagTypes.h).
+    assert codes.EC_TAGTYPE_UNKNOWN == 0x00  # jamais émis ; garde du codec
     assert codes.EC_TAGTYPE_CUSTOM == 0x01
     assert codes.EC_TAGTYPE_UINT8 == 0x02
     assert codes.EC_TAGTYPE_UINT16 == 0x03

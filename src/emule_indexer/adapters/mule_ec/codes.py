@@ -12,6 +12,7 @@ EC_CURRENT_PROTOCOL_VERSION: Final[int] = 0x0204
 EC_FLAG_BASE: Final[int] = 0x20  # bit de base TOUJOURS présent (m_my_flags(0x20), ECSocket.cpp:275)
 EC_FLAG_ZLIB: Final[int] = 0x00000001
 EC_FLAG_UTF8_NUMBERS: Final[int] = 0x00000002
+EC_FLAG_LARGE_TAG_COUNT: Final[int] = 0x00000010  # ✦ 3.0.0 ; jamais émis ni accepté (DÉCISION 2)
 EC_FLAG_UNKNOWN_MASK: Final[int] = 0xFF7F7F08
 
 # --- Opcodes (réf. §7) ----------------------------------------------------------------
