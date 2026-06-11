@@ -21,6 +21,7 @@ from emule_indexer.adapters.mule_ec.errors import (
     EcConnectError,
     EcFailureError,
     EcProtocolError,
+    EcTimeoutError,
 )
 from emule_indexer.adapters.mule_ec.mapping import map_search_results
 from emule_indexer.adapters.mule_ec.transport import EcTransport, open_ec_transport
@@ -63,7 +64,9 @@ class AmuleEcClient:
     """Pilote un ``amuled`` via EC. Trois usages câblés : auth, recherche, statut (spec §3).
 
     ``skipped_entries_total`` accumule les entrées de résultats écartées par le mapper
-    (futur brancheur de métrique, plan E — DÉCISION 6).
+    (futur brancheur de métrique, plan E — DÉCISION 6). C'est un compteur d'ÉVÉNEMENTS :
+    le relevé étant cumulatif, une même entrée inexploitable revue à chaque relevé compte
+    à chaque fois — ne pas le lire comme « entrées uniques perdues ».
     """
 
     def __init__(self, host: str, port: int, password: str, *, timeout: float = 10.0) -> None:
@@ -77,6 +80,8 @@ class AmuleEcClient:
 
     async def connect(self) -> None:
         """TCP + handshake d'auth (réf. §4). Échec → exception, SANS retry (spec §5)."""
+        if self._transport is not None:
+            raise EcConnectError("déjà connecté (appeler close() d'abord)")
         if not self._password:
             raise EcAuthError("mot de passe EC vide (refusé, miroir de RemoteConnect.cpp:117)")
         transport = await open_ec_transport(self._host, self._port, timeout=self._timeout)
@@ -106,7 +111,12 @@ class AmuleEcClient:
         self._current_keyword = keyword  # provenance, posée APRÈS le succès
 
     async def fetch_results(self) -> tuple[FileObservation, ...]:
-        """Snapshot CUMULATIF des résultats accumulés par le daemon (réf. §5)."""
+        """Snapshot CUMULATIF des résultats accumulés par le daemon (réf. §5).
+
+        Appelé avant tout ``start_search`` réussi, les observations porteraient
+        ``keyword=""`` (et, face à un vrai daemon, les résultats d'une éventuelle
+        recherche précédente) ; l'appelant est censé démarrer une recherche d'abord.
+        """
         reply = await self._request(
             EcPacket(codes.EC_OP_SEARCH_RESULTS), codes.EC_OP_SEARCH_RESULTS
         )
@@ -180,10 +190,19 @@ class AmuleEcClient:
         return self._transport
 
     async def _request(self, packet: EcPacket, expected_opcode: int) -> EcPacket:
-        """Une requête → une réponse (FCFS). FAILED → EcFailureError ; autre → EcProtocolError."""
+        """Une requête → une réponse (FCFS). FAILED → EcFailureError ; autre → EcProtocolError.
+
+        Sur ``EcTimeoutError``/``EcConnectError``, le flux peut être désynchronisé
+        (contrat du transport) : le transport est JETÉ (fermeture best-effort) avant de
+        re-signaler — l'appel SUIVANT échoue vite et proprement avec « non connecté ».
+        """
         transport = self._require_transport()
-        await transport.send_packet(packet)
-        reply = await transport.receive_packet()
+        try:
+            await transport.send_packet(packet)
+            reply = await transport.receive_packet()
+        except (EcTimeoutError, EcConnectError):
+            await self.close()
+            raise
         if reply.opcode == codes.EC_OP_FAILED:
             raise EcFailureError(_failure_message(reply))
         if reply.opcode != expected_opcode:

@@ -15,6 +15,7 @@ from emule_indexer.adapters.mule_ec.errors import (
     EcConnectError,
     EcFailureError,
     EcProtocolError,
+    EcTimeoutError,
 )
 from emule_indexer.ports.mule_client import KadStatus, NetworkStatus, SearchChannel
 from tests.adapters.mule_ec.ec_fakes import FakeEcServer
@@ -173,6 +174,20 @@ async def test_connect_refuses_empty_password_before_any_io() -> None:
 
 
 @pytest.mark.asyncio
+async def test_connect_twice_raises_and_keeps_the_first_connection_usable() -> None:
+    # Un second connect() ne doit PAS fuiter le premier transport : refus immédiat,
+    # et la première connexion reste pleinement utilisable ensuite.
+    stop_ok = encode_packet(EcPacket(codes.EC_OP_MISC_DATA))
+    async with FakeEcServer(_auth_replies(1) + [stop_ok]) as server:
+        client = AmuleEcClient("127.0.0.1", server.port, _PASSWORD, timeout=2.0)
+        await client.connect()
+        with pytest.raises(EcConnectError, match="déjà connecté"):
+            await client.connect()
+        await client.stop_search()  # la première connexion fonctionne toujours
+        await client.close()
+
+
+@pytest.mark.asyncio
 async def test_close_is_a_noop_when_never_connected_and_idempotent() -> None:
     client = AmuleEcClient("127.0.0.1", 1, _PASSWORD, timeout=2.0)
     await client.close()  # jamais connecté : no-op
@@ -323,6 +338,22 @@ async def test_operations_without_connect_raise_connect_error() -> None:
     client = AmuleEcClient("127.0.0.1", 1, _PASSWORD, timeout=2.0)
     with pytest.raises(EcConnectError, match="non connecté"):
         await client.fetch_results()
+
+
+@pytest.mark.asyncio
+async def test_request_timeout_invalidates_the_transport() -> None:
+    # Contrat du transport : après un timeout de lecture, le flux peut être désynchronisé
+    # — le client doit JETER le transport, pas relire une trame périmée (FCFS cassé sinon).
+    # Réponses épuisées après l'auth → le faux serveur se tait → timeout de lecture.
+    async with FakeEcServer(_auth_replies(1)) as server:
+        client = AmuleEcClient("127.0.0.1", server.port, _PASSWORD, timeout=0.2)
+        await client.connect()
+        with pytest.raises(EcTimeoutError):
+            await client.stop_search()
+        # L'appel SUIVANT échoue vite et proprement : le transport a été invalidé.
+        with pytest.raises(EcConnectError, match="non connecté"):
+            await client.stop_search()
+        await client.close()  # toujours idempotent après invalidation
 
 
 # ---------------------------------------------------------------- statut réseau
