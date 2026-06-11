@@ -1,9 +1,13 @@
+import zlib
+
 import pytest
 
 from emule_indexer.adapters.mule_ec import codes
 from emule_indexer.adapters.mule_ec.codec import (
     EcPacket,
     EcTag,
+    decode_header,
+    decode_packet,
     empty_tag,
     encode_packet,
     hash16_tag,
@@ -258,3 +262,162 @@ def test_encode_packet_counts_grandchildren_in_taglen() -> None:
     )
     # fmt: on
     assert encode_packet(EcPacket(codes.EC_OP_MISC_DATA, (grand,))) == expected
+
+
+# ---------------------------------------------------------------- décodage nominal
+
+
+def test_decode_header_accepts_base_and_base_zlib_flags() -> None:
+    assert decode_header(bytes.fromhex("00000020" "00000003")) == (0x20, 3)  # fmt: skip
+    assert decode_header(bytes.fromhex("00000021" "00000010")) == (0x21, 16)  # fmt: skip
+
+
+def test_decode_packet_rebuilds_the_auth_req_tree() -> None:
+    assert decode_packet(_AUTH_REQ_FRAME) == _auth_req_packet()
+
+
+def test_decode_packet_rebuilds_the_nested_search_result_tree() -> None:
+    # Piège 2 (TAGNAME >> 1) et piège 3 (valeur propre = TAGLEN - Σ enfants) traversés.
+    assert decode_packet(_SEARCH_RESULT_FRAME) == _search_result_packet()
+
+
+def test_decode_packet_minimal_noop() -> None:
+    frame = bytes.fromhex("00000020" "00000003" "01" "0000")  # fmt: skip
+    assert decode_packet(frame) == EcPacket(codes.EC_OP_NOOP)
+
+
+def test_roundtrip_encode_decode_is_identity_on_forged_packets() -> None:
+    # Round-trip sur un éventail de formes : tags vides, toutes largeurs d'entiers, hash,
+    # chaînes accentuées, imbrication à 3 niveaux, valeur propre + enfants simultanés.
+    deep = EcTag(
+        0x0700,
+        codes.EC_TAGTYPE_UINT16,
+        b"\x12\x34",
+        (
+            empty_tag(codes.EC_TAG_CAN_ZLIB),
+            string_tag(0x0301, "épisode 062A — « démo »"),
+            EcTag(
+                0x0500,
+                codes.EC_TAGTYPE_IPV4,
+                bytes([10, 0, 0, 1]) + (4712).to_bytes(2, "big"),
+                (string_tag(0x0501, "serveur"),),
+            ),
+        ),
+    )
+    packets = [
+        EcPacket(codes.EC_OP_NOOP),
+        _auth_req_packet(),
+        _search_result_packet(),
+        EcPacket(
+            codes.EC_OP_MISC_DATA,
+            (
+                deep,
+                uint_tag(0x0001, 0),
+                uint_tag(0x0002, 0xFFFF),
+                uint_tag(0x0003, 0xFFFFFFFF),
+                uint_tag(0x0004, (1 << 64) - 1),
+                hash16_tag(0x031E, bytes(range(16))),
+            ),
+        ),
+    ]
+    for packet in packets:
+        assert decode_packet(encode_packet(packet)) == packet
+
+
+# ---------------------------------------------------------------- entrées hostiles
+
+
+def test_decode_header_rejects_wrong_size_unknown_flags_and_oversized_length() -> None:
+    with pytest.raises(EcProtocolError):
+        decode_header(bytes.fromhex("0000002000"))  # 5 octets au lieu de 8
+    # Flags refusés (DÉCISION 2) : UTF8_NUMBERS non négocié, bit 0x40 interdit, base absente.
+    for flags_hex in ("00000022", "00000060", "00000000", "00000028"):
+        with pytest.raises(EcProtocolError):
+            decode_header(bytes.fromhex(flags_hex + "00000003"))
+    # Plafond 16 Mio (ReadHeader, ECSocket.cpp:540) : 16 Mio + 1 → rejet net.
+    with pytest.raises(EcProtocolError):
+        decode_header(bytes.fromhex("00000020" "01000001"))  # fmt: skip
+    # Exactement 16 Mio (0x01000000) : accepté (borne incluse).
+    assert decode_header(bytes.fromhex("0000002001000000")) == (0x20, 16 * 1024 * 1024)
+
+
+def test_decode_rejects_truncated_value_inside_a_tag() -> None:
+    # Tag STRING annonçant TAGLEN=5 mais 1 seul octet présent ; length d'en-tête cohérente (11).
+    # payload : 28 | 0001 | 0602 06 00000005 | 41  →  take(5) déborde → « paquet EC tronqué ».
+    frame = bytes.fromhex("000000200000000b2800010602060000000541")
+    with pytest.raises(EcProtocolError, match="tronqué"):
+        decode_packet(frame)
+
+
+def test_decode_rejects_lying_taglen_smaller_than_children() -> None:
+    # Parent 0x0700 avec 1 enfant de 8 octets sérialisés mais TAGLEN=0 → valeur propre -8.
+    # payload : 28 | 0001 | 0E01 02 00000000 0001 | 0614 02 00000001 05  (20 octets = 0x14)
+    # fmt: off
+    frame = bytes.fromhex(
+        "00000020" "00000014" "28" "0001" "0e01" "02" "00000000" "0001" "0614" "02" "00000001" "05"
+    )
+    # fmt: on
+    with pytest.raises(EcProtocolError, match="TAGLEN menteur"):
+        decode_packet(frame)
+
+
+def test_decode_rejects_trailing_garbage_after_last_tag() -> None:
+    # Trame NOOP valide + 1 octet 0xFF compté dans length → « octets résiduels ».
+    frame = bytes.fromhex("00000020" "00000004" "01" "0000" "ff")  # fmt: skip
+    with pytest.raises(EcProtocolError, match="résiduels"):
+        decode_packet(frame)
+
+
+def test_decode_packet_rejects_frame_length_mismatch() -> None:
+    with pytest.raises(EcProtocolError, match="incohérente"):
+        decode_packet(_AUTH_REQ_FRAME[:-1])  # un octet manquant par rapport à l'en-tête
+
+
+def _nested_empty_tags(levels: int) -> EcTag:
+    tag = empty_tag(0x0999)
+    for _ in range(levels - 1):
+        tag = empty_tag(0x0999, (tag,))
+    return tag
+
+
+def test_decode_accepts_depth_32_and_rejects_depth_33() -> None:
+    ok_frame = encode_packet(EcPacket(codes.EC_OP_NOOP, (_nested_empty_tags(32),)))
+    assert decode_packet(ok_frame).tags[0].children  # 32 niveaux : décodé sans erreur
+    bad_frame = encode_packet(EcPacket(codes.EC_OP_NOOP, (_nested_empty_tags(33),)))
+    with pytest.raises(EcProtocolError, match="profonde"):
+        decode_packet(bad_frame)
+
+
+# ---------------------------------------------------------------- zlib borné
+
+
+def _zlib_frame(payload: bytes) -> bytes:
+    compressed = zlib.compress(payload)
+    return bytes.fromhex("00000021") + len(compressed).to_bytes(4, "big") + compressed
+
+
+def test_decode_inflates_a_valid_zlib_frame() -> None:
+    # Le payload SEARCH_RESULTS (clair, déjà validé) compressé : même arbre à l'arrivée.
+    assert decode_packet(_zlib_frame(_SEARCH_RESULT_FRAME[8:])) == _search_result_packet()
+
+
+def test_decode_rejects_corrupt_zlib_stream() -> None:
+    frame = _zlib_frame(_SEARCH_RESULT_FRAME[8:])
+    corrupted = frame[:8] + b"\x00\x00" + frame[10:]  # écrase l'en-tête zlib
+    with pytest.raises(EcProtocolError, match="zlib"):
+        decode_packet(corrupted)
+
+
+def test_decode_rejects_truncated_zlib_stream() -> None:
+    compressed = zlib.compress(_SEARCH_RESULT_FRAME[8:])[:-4]  # flux valide mais incomplet
+    frame = bytes.fromhex("00000021") + len(compressed).to_bytes(4, "big") + compressed
+    with pytest.raises(EcProtocolError, match="zlib"):
+        decode_packet(frame)
+
+
+def test_decode_rejects_zlib_bomb_beyond_the_decompression_bound() -> None:
+    # 16 Mio + 1 de zéros compressés en ~16 Kio : la décompression BORNÉE refuse (DÉCISION 3).
+    bomb = zlib.compress(b"\x00" * (16 * 1024 * 1024 + 1))
+    frame = bytes.fromhex("00000021") + len(bomb).to_bytes(4, "big") + bomb
+    with pytest.raises(EcProtocolError, match="zlib"):
+        decode_packet(frame)

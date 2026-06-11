@@ -5,6 +5,7 @@ Les noms de tags manipulés ici sont LOGIQUES ; le décalage wire ``(nom << 1) |
 (réf. §2, piège 2) est enfermé dans l'encodage/décodage (Tasks 6-8).
 """
 
+import zlib
 from dataclasses import dataclass
 from typing import Final
 
@@ -141,3 +142,111 @@ def encode_packet(packet: EcPacket) -> bytes:
     for tag in packet.tags:
         payload += _encode_tag(tag)
     return codes.EC_FLAG_BASE.to_bytes(4, "big") + len(payload).to_bytes(4, "big") + payload
+
+
+_HEADER_SIZE = 8  # EC_HEADER_SIZE (ECSocket.h:72), réf. §1
+_MAX_PACKET_PAYLOAD = 16 * 1024 * 1024  # plafond aMule (ReadHeader, ECSocket.cpp:540)
+_MAX_DECOMPRESSED = 16 * 1024 * 1024  # borne défensive sur l'inflation zlib (DÉCISION 3)
+_MAX_TAG_DEPTH = 32  # borne défensive d'imbrication (DÉCISION 3)
+# DÉCISION 2 : seules deux combinaisons de flags sont acceptées en lecture.
+_ACCEPTED_FLAGS = (codes.EC_FLAG_BASE, codes.EC_FLAG_BASE | codes.EC_FLAG_ZLIB)
+
+
+class _Reader:
+    """Curseur borné sur un payload : toute lecture au-delà → ``EcProtocolError``."""
+
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+        self._pos = 0
+
+    @property
+    def exhausted(self) -> bool:
+        return self._pos == len(self._data)
+
+    def take(self, count: int) -> bytes:
+        if self._pos + count > len(self._data):
+            raise EcProtocolError("paquet EC tronqué")
+        chunk = self._data[self._pos : self._pos + count]
+        self._pos += count
+        return chunk
+
+    def read_u8(self) -> int:
+        return self.take(1)[0]
+
+    def read_u16(self) -> int:
+        return int.from_bytes(self.take(2), "big")
+
+    def read_u32(self) -> int:
+        return int.from_bytes(self.take(4), "big")
+
+
+def decode_header(header: bytes) -> tuple[int, int]:
+    """En-tête fixe de 8 octets → ``(flags, length)``, validation STRICTE (réf. §1)."""
+    if len(header) != _HEADER_SIZE:
+        raise EcProtocolError(f"en-tête EC : 8 octets attendus, reçu {len(header)}")
+    flags = int.from_bytes(header[:4], "big")
+    length = int.from_bytes(header[4:], "big")
+    if flags not in _ACCEPTED_FLAGS:
+        raise EcProtocolError(f"flags EC refusés : 0x{flags:08X} (acceptés : 0x20, 0x21)")
+    if length > _MAX_PACKET_PAYLOAD:
+        raise EcProtocolError(f"longueur de paquet aberrante : {length}")
+    return flags, length
+
+
+def _inflate(data: bytes) -> bytes:
+    """Décompression zlib BORNÉE (réf. §1 EC_FLAG_ZLIB ; spec §6 parsing défensif)."""
+    decompressor = zlib.decompressobj()
+    try:
+        inflated = decompressor.decompress(data, _MAX_DECOMPRESSED)
+    except zlib.error as exc:
+        raise EcProtocolError(f"flux zlib corrompu : {exc}") from exc
+    if decompressor.unconsumed_tail or not decompressor.eof:
+        raise EcProtocolError("flux zlib hors borne ou tronqué")
+    return inflated
+
+
+def _decode_tag(reader: _Reader, depth: int) -> EcTag:
+    """Décode un tag (réf. §2) : ``TAGNAME >> 1``, enfants AVANT la valeur propre,
+    valeur propre = ``TAGLEN - Σ(taille sérialisée des enfants)`` (ECTag.cpp:436-438)."""
+    if depth >= _MAX_TAG_DEPTH:
+        raise EcProtocolError("imbrication de tags trop profonde")
+    wire_name = reader.read_u16()
+    name = wire_name >> 1
+    has_children = bool(wire_name & 0x01)
+    tag_type = reader.read_u8()
+    tag_len = reader.read_u32()
+    children: tuple[EcTag, ...] = ()
+    children_size = 0
+    if has_children:
+        count = reader.read_u16()
+        decoded = []
+        for _ in range(count):
+            child = _decode_tag(reader, depth + 1)
+            children_size += _serialized_len(child)
+            decoded.append(child)
+        children = tuple(decoded)
+    own_len = tag_len - children_size
+    if own_len < 0:
+        raise EcProtocolError(f"TAGLEN menteur sur le tag 0x{name:04X}")
+    return EcTag(name, tag_type, reader.take(own_len), children)
+
+
+def decode_payload(flags: int, payload: bytes) -> EcPacket:
+    """Payload (éventuellement zlib) → ``EcPacket``. Tout octet résiduel est une erreur."""
+    if flags & codes.EC_FLAG_ZLIB:
+        payload = _inflate(payload)
+    reader = _Reader(payload)
+    opcode = reader.read_u8()
+    tag_count = reader.read_u16()
+    tags = tuple(_decode_tag(reader, depth=0) for _ in range(tag_count))
+    if not reader.exhausted:
+        raise EcProtocolError("octets résiduels après le dernier tag")
+    return EcPacket(opcode, tags)
+
+
+def decode_packet(frame: bytes) -> EcPacket:
+    """Trame complète (en-tête + payload) → ``EcPacket`` (convenance tests/faux serveur)."""
+    flags, length = decode_header(frame[:_HEADER_SIZE])
+    if len(frame) != _HEADER_SIZE + length:
+        raise EcProtocolError("longueur de trame incohérente avec l'en-tête")
+    return decode_payload(flags, frame[_HEADER_SIZE:])
