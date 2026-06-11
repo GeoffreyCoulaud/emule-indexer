@@ -5,6 +5,7 @@ from emule_indexer.adapters.mule_ec.codec import (
     EcPacket,
     EcTag,
     empty_tag,
+    encode_packet,
     hash16_tag,
     string_tag,
     uint_tag,
@@ -142,3 +143,97 @@ def test_packet_find_returns_first_top_level_tag_or_none() -> None:
     dup_a = string_tag(codes.EC_TAG_STRING, "premier")
     dup_b = string_tag(codes.EC_TAG_STRING, "second")
     assert EcPacket(codes.EC_OP_STRINGS, (dup_a, dup_b)).find(codes.EC_TAG_STRING) is dup_a
+
+
+# ---------------------------------------------------------------- encodage
+
+# Trame AUTH_REQ de référence, dérivée OCTET PAR OCTET de la réf. §1/§2/§4 :
+#   en-tête 8 octets : flags=0x00000020 (base seule, DÉCISION 2), length=0x00000024 (36)
+#   payload : opcode 0x02 (EC_OP_AUTH_REQ) ; TAGCOUNT 0x0003
+#     tag1 : TAGNAME 0x0200 (= 0x0100 CLIENT_NAME << 1, bit enfants 0), TAGTYPE 0x06 (STRING),
+#            TAGLEN 0x00000006, valeur "probe\0" (NUL inclus, piège 10)
+#     tag2 : TAGNAME 0x0202 (= 0x0101 CLIENT_VERSION << 1), STRING, TAGLEN 4, "1.0\0"
+#     tag3 : TAGNAME 0x0004 (= 0x0002 PROTOCOL_VERSION << 1), TAGTYPE 0x03 (UINT16 :
+#            0x0204 émis au plus court), TAGLEN 2, valeur 0x0204
+# Le groupement par champ EST la dérivation ; ruff format recollerait les chaînes.
+# fmt: off
+_AUTH_REQ_FRAME = bytes.fromhex(
+    "00000020" "00000024"
+    "02" "0003"
+    "0200" "06" "00000006" "70726f626500"
+    "0202" "06" "00000004" "312e3000"
+    "0004" "03" "00000002" "0204"
+)
+# fmt: on
+
+
+def _auth_req_packet() -> EcPacket:
+    return EcPacket(
+        codes.EC_OP_AUTH_REQ,
+        (
+            string_tag(codes.EC_TAG_CLIENT_NAME, "probe"),
+            string_tag(codes.EC_TAG_CLIENT_VERSION, "1.0"),
+            uint_tag(codes.EC_TAG_PROTOCOL_VERSION, codes.EC_CURRENT_PROTOCOL_VERSION),
+        ),
+    )
+
+
+def test_encode_packet_produces_the_exact_auth_req_frame() -> None:
+    assert encode_packet(_auth_req_packet()) == _AUTH_REQ_FRAME
+
+
+# Trame SEARCH_RESULTS imbriquée, dérivée de la réf. §2 (TAGLEN, piège 3) et §5 :
+#   parent : TAGNAME 0x0E01 (= 0x0700 SEARCHFILE << 1 | 1 enfants), TAGTYPE 0x02 (UINT8 :
+#            ECID=1 émis au plus court), TAGLEN 0x52 (82), TAGCOUNT 0x0006
+#   TAGLEN parent = valeur propre (1) + Σ enfants (TAGLEN + 7 d'en-tête chacun, aucun
+#   petit-enfant donc pas de +2) = 1 + (16+7)+(4+7)+(16+7)+(1+7)+(1+7)+(1+7) = 82
+#   enfants (TAGNAME = nom << 1) :
+#     0x0602 (=0x0301 NAME) STRING  len 16 : "Keroro 062A.avi\0"
+#     0x0606 (=0x0303 SIZE_FULL) UINT32 len 4 : 234567890 = 0x0DFB38D2
+#     0x063C (=0x031E HASH) HASH16 len 16 : 000102...0f
+#     0x0614 (=0x030A SOURCE_COUNT) UINT8 len 1 : 5
+#     0x061A (=0x030D SOURCE_COUNT_XFER) UINT8 len 1 : 2
+#     0x1332 (=0x0999 tag INCONNU forgé) UINT8 len 1 : 7
+#   payload = opcode(1) + tagcount(2) + en-tête parent(7) + TAGCOUNT parent(2) + 82 = 94 = 0x5E
+# fmt: off
+_SEARCH_RESULT_FRAME = bytes.fromhex(
+    "00000020" "0000005e"
+    "28" "0001"
+    "0e01" "02" "00000052" "0006"
+    "0602" "06" "00000010" "4b65726f726f20303632412e61766900"
+    "0606" "04" "00000004" "0dfb38d2"
+    "063c" "09" "00000010" "000102030405060708090a0b0c0d0e0f"
+    "0614" "02" "00000001" "05"
+    "061a" "02" "00000001" "02"
+    "1332" "02" "00000001" "07"
+    "01"
+)
+# fmt: on
+
+
+def _search_result_packet() -> EcPacket:
+    entry = EcTag(
+        codes.EC_TAG_SEARCHFILE,
+        codes.EC_TAGTYPE_UINT8,
+        b"\x01",  # ECID (identifiant de session VOLATIL, piège 13 — jamais persisté)
+        (
+            string_tag(codes.EC_TAG_PARTFILE_NAME, "Keroro 062A.avi"),
+            uint_tag(codes.EC_TAG_PARTFILE_SIZE_FULL, 234567890),
+            hash16_tag(codes.EC_TAG_PARTFILE_HASH, bytes(range(16))),
+            uint_tag(codes.EC_TAG_PARTFILE_SOURCE_COUNT, 5),
+            uint_tag(codes.EC_TAG_PARTFILE_SOURCE_COUNT_XFER, 2),
+            uint_tag(0x0999, 7),  # tag inconnu : doit voyager sans erreur (capture-all)
+        ),
+    )
+    return EcPacket(codes.EC_OP_SEARCH_RESULTS, (entry,))
+
+
+def test_encode_packet_handles_children_taglen_and_tagcount() -> None:
+    # Vérifie le piège 3 : TAGLEN parent inclut en-têtes des enfants, PAS son propre TAGCOUNT.
+    assert encode_packet(_search_result_packet()) == _SEARCH_RESULT_FRAME
+
+
+def test_encode_packet_with_no_tags_is_the_minimal_frame() -> None:
+    # NOOP sans tag : payload = opcode (1) + TAGCOUNT 0x0000 (2) = 3 octets.
+    expected = bytes.fromhex("00000020" "00000003" "01" "0000")  # fmt: skip
+    assert encode_packet(EcPacket(codes.EC_OP_NOOP)) == expected

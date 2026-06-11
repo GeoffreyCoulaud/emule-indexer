@@ -102,3 +102,42 @@ def hash16_tag(name: int, digest: bytes, children: tuple[EcTag, ...] = ()) -> Ec
 def empty_tag(name: int, children: tuple[EcTag, ...] = ()) -> EcTag:
     """Tag vide (CECEmptyTag, réf. §2) : type CUSTOM, TAGLEN 0 — forme des tags ``CAN_*``."""
     return EcTag(name, codes.EC_TAGTYPE_CUSTOM, b"", children)
+
+
+_TAG_HEADER_SIZE = 7  # TAGNAME (2) + TAGTYPE (1) + TAGLEN (4) — réf. §2
+_TAGCOUNT_SIZE = 2  # uint16, présent UNIQUEMENT si le bit 0 du TAGNAME est à 1
+
+
+def _tag_len(tag: EcTag) -> int:
+    """TAGLEN (réf. §2, GetTagLen, ECTag.cpp:553-561) : valeur propre + taille sérialisée
+    COMPLÈTE de chaque enfant (son TAGLEN + ses 7 octets d'en-tête + ses 2 octets de
+    TAGCOUNT s'il a lui-même des enfants). EXCLUT l'en-tête et le TAGCOUNT du tag lui-même."""
+    return len(tag.value) + sum(_serialized_len(child) for child in tag.children)
+
+
+def _serialized_len(tag: EcTag) -> int:
+    """Taille sérialisée complète d'un tag (ce que son PARENT compte dans son TAGLEN)."""
+    return _TAG_HEADER_SIZE + (_TAGCOUNT_SIZE if tag.children else 0) + _tag_len(tag)
+
+
+def _encode_tag(tag: EcTag) -> bytes:
+    """Sérialise un tag : TAGNAME décalé, type, TAGLEN, [TAGCOUNT + enfants], valeur (réf. §2)."""
+    wire_name = (tag.name << 1) | (1 if tag.children else 0)
+    out = wire_name.to_bytes(2, "big") + bytes([tag.tag_type]) + _tag_len(tag).to_bytes(4, "big")
+    if tag.children:
+        out += len(tag.children).to_bytes(2, "big")
+        for child in tag.children:
+            out += _encode_tag(child)
+    return out + tag.value  # sous-tags AVANT la valeur propre (réf. §2)
+
+
+def encode_packet(packet: EcPacket) -> bytes:
+    """Trame complète : en-tête 8 octets (flags 0x20, length) + opcode + TAGCOUNT + tags.
+
+    DÉCISION 2 : on n'annonce aucune capacité → on émet TOUJOURS ``flags = 0x20`` (ni zlib
+    ni nombres UTF-8) ; l'opcode et les compteurs sont donc bruts (réf. §1).
+    """
+    payload = bytes([packet.opcode]) + len(packet.tags).to_bytes(2, "big")
+    for tag in packet.tags:
+        payload += _encode_tag(tag)
+    return codes.EC_FLAG_BASE.to_bytes(4, "big") + len(payload).to_bytes(4, "big") + payload
