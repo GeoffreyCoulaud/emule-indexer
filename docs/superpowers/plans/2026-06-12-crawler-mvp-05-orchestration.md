@@ -16,7 +16,7 @@
 
 ## Vérifications empiriques (faites PENDANT l'écriture du plan — ne PAS re-découvrir)
 
-Tout le code async/SQL ci-dessous a été **exécuté pour de vrai** (venv du projet, Python **3.12.9**, `sqlite3.sqlite_version == 3.47.1`, `pytest-asyncio == 1.4.0`), puis le plan ENTIER a été assemblé dans un bac à sable et le **gate 5 checks** exécuté sur l'état final : **490 passed, 5 deselected, 100.00 % branch ; ruff check + ruff format + mypy (121 fichiers) + sqlfluff verts.**
+Tout le code async/SQL ci-dessous a été **exécuté pour de vrai** (venv du projet, Python **3.12.9**, `sqlite3.sqlite_version == 3.47.1`, `pytest-asyncio == 1.4.0`), puis le plan ENTIER a été assemblé dans un bac à sable et le **gate 5 checks** exécuté sur l'état final : **495 passed, 5 deselected, 100.00 % branch ; ruff check + ruff format + mypy (122 fichiers) + sqlfluff verts.**
 
 1. **Worker pool** : N workers async drainant une `asyncio.Queue`, une **sentinelle `None` par worker** + `await queue.join()` avant d'enfiler les sentinelles, sous `asyncio.TaskGroup` — draine correctement (10 items, 3 workers, vérifié).
 2. **Annulation** : annuler le `TaskGroup` (lever dans le bloc) → les workers reçoivent `CancelledError` → leur `finally` s'exécute (`finally_ran=True cancelled_seen=True`). **MAIS** — découverte critique — **annuler UN enfant d'un `TaskGroup` (`child.cancel()`) quand le groupe lui-même n'est PAS annulé NE propage AUCUN `CancelledError`** au sortir du `async with` : l'unwind est PROPRE, un `except* CancelledError` serait **du code mort**. (D'où le design de `_supervise` : pas d'`except*`, on logge après le bloc.)
@@ -29,7 +29,8 @@ Tout le code async/SQL ci-dessous a été **exécuté pour de vrai** (venv du pr
 9. **`AsyncExitStack` + `asyncio.timeout`** : les ressources se ferment en LIFO APRÈS l'unwind du `TaskGroup` (workers `finally` AVANT tout `close:` — vérifié). `asyncio.timeout(d)` autour d'une fermeture qui traîne → `TimeoutError` (arrêt borné). Une `aclose()` interrompue par le timeout laisse les callbacks RESTANTS rejouables par un second `aclose()` best-effort.
 10. **Backoff PERSISTÉ dans `scheduler_state`** (spec §3/§7) : la map ``{ "amule-1:kad": {attempts, retry_after}, "amule-1": {...} }`` se sérialise en JSON sous UNE clé KV (`channel_backoff`) de `scheduler_state` (table KV, NON append-only → UPSERT licite). Round-trip vérifié sur une base construite depuis la VRAIE migration `0001_initial.sql` : save → instance de repo NEUVE (simule un redémarrage) → load → map IDENTIQUE ; clé absente → `{}` ; overwrite par snapshot vide → `{}`. `retry_after` est un ISO-8601 UTC à largeur fixe → comparaison `now < retry_after` lexicographique == chronologique.
 11. **Round-trip de backoff bout-en-bout (à travers `BackoffRegistry` + repo réel)** : `record_failure("amule-1:kad")` (jitter 0 → délai NOMINAL 2.0s, `retry_after = now + 2.0s`) → `save_channel_backoff(snapshot)` → REDÉMARRAGE (repo neuf + registre neuf, ZÉRO état mémoire) → `load_from(repo.load_channel_backoff())` → `is_in_backoff` rend `True` (skip) ; après avance de 3.0s du faux clock → `False` (re-armé/expiré). **La persistance survit au redémarrage, empiriquement.**
-12. **Jitter via le port `Rng`** : `SeededRng.jitter(span)` ∈ `[0, span)` (vérifié sur 20 tirages), reproductible pour un `jitter_seed` donné, `0.0` si `span <= 0`. Le faux `Rng` de test rend un jitter CONSTANT (déterminisme : assertions exactes sur le délai).
+12. **Jitter via le port `Rng`** : `SeededRng.jitter(span)` ∈ `[0, span)` (vérifié sur 20 tirages), reproductible pour un `jitter_seed` donné, `0.0` si `span <= 0`. Le faux `Rng` de test rend un jitter CONSTANT (sauf `span ≤ 0 → 0`, contrat respecté) → déterminisme : assertions exactes sur le délai.
+13. **Pause inter-mots-clés « between not after » (anti-rate-limit, spec §5/§7)** : un travailleur drainant N items dort EXACTEMENT N−1 pauses (entre chaque item, jamais après le dernier) — vérifié sur un cycle réel (faux clock/rng) : 10 items → `clock.sleeps == [1.0]*9`, en **~0 ms réelles** (le faux `sleep` avance le faux clock sans attendre). `min == max` → pause FIXE (span 0 → jitter 0). À deux travailleurs partageant l'horloge, le total des pauses est STRICTEMENT < N (la dernière de chaque drain est sautée, file vidée).
 
 ---
 
@@ -95,7 +96,10 @@ pyproject.toml                             # Modify : marqueur orchestration_int
 > `NetworkStatus` vit dans `ports/mule_client.py` ; le domaine ne peut pas l'importer. `domain/search/coverage.py` reçoit `Sequence[bool]` (« telle instance peut-elle faire aboutir une recherche ? »). C'est l'APPLICATION (`run_search_cycle._is_search_capable`) qui traduit chaque `NetworkStatus` en booléen (HighID eD2k OU Kad CONNECTED) avant d'appeler le domaine pur. `any(())` vaut `False` → liste vide tombe sur `BLIND`.
 
 > **DÉCISION 5 — Paramètres de politique injectés en PRIMITIFS dans l'application.**
-> `CrawlerConfig`/`BackoffConfig` (value objects) vivent dans l'adapter `adapters/config/` (spec §4). L'application ne les importe PAS (ce serait application→adapter). `SearchWorker` reçoit un `WorkerPolicy` (dataclass gelé d'application, primitifs : backoff base/cap/factor + poll budget/interval) ; la composition root DÉBALLE `CrawlerConfig` en `WorkerPolicy` (`_build_policy`). `run_search_cycle` reçoit l'`Rng`/`Clock`/`SchedulerStateRepository` directement.
+> `CrawlerConfig`/`BackoffConfig` (value objects) vivent dans l'adapter `adapters/config/` (spec §4). L'application ne les importe PAS (ce serait application→adapter). `SearchWorker` reçoit un `WorkerPolicy` (dataclass gelé d'application, primitifs : backoff base/cap/factor/jitter + poll budget/interval + **keyword_pause min/max**) ; la composition root DÉBALLE `CrawlerConfig` en `WorkerPolicy` (`_build_policy`). `run_search_cycle` reçoit l'`Rng`/`Clock`/`SchedulerStateRepository` directement.
+
+> **DÉCISION 5bis — `keyword_pause` est CONSOMMÉ (anti-rate-limit eD2k, spec §5/§7) ; `decision_poll_interval` est parsé-mais-INERTE par design.**
+> **`keyword_pause`** : ENTRE deux items d'un même travailleur (après le cycle complet start_search→poll→fetch→persist d'un item, AVANT de tirer le suivant de la queue), le drain dort une PAUSE JITTERÉE `min + rng.jitter(max − min)` via `clock.sleep`/`rng` injectés (déterministe en test). Sans elle, des recherches back-to-back feraient bannir l'`amuled` réel d'un serveur eD2k au bout du plan C (spec §7). La pause est SAUTÉE quand la file est déjà vidée après l'item (`not queue.empty()` dans `_worker_loop`) — inutile de dormir avant de sortir/attendre une sentinelle. `min == max` → `span 0` → `jitter(0) == 0` (contrat du port) → pause FIXE = `min`. Les bornes passent par `WorkerPolicy.keyword_pause_min/max_seconds` (déballées par `_build_policy`) ; le jitter réutilise `Rng.jitter` (PAS de nouvelle méthode RNG). `WorkerDeps` gagne `rng` (le worker a besoin du tirage ; le backoff a son propre accès via le registre — même instance partagée). **`decision_poll_interval`** : parsé/validé dans `CrawlerConfig` mais VOLONTAIREMENT inerte en plan C — c'est le filet de repli du nudge (`DecisionSignal`) pour les futurs consommateurs IN-PROCESS (plans D/E), forward-compat par design ; la revue holistique ne doit PAS le signaler comme câblage manquant.
 
 > **DÉCISION 6 — Arrêt : `_supervise` SANS `except*` (vérif empirique 2).**
 > Annuler `loop_task` (un enfant du `TaskGroup`) ne propage AUCUN `CancelledError` au sortir du `async with`. Le `_human("Travailleurs arrêtés.")` est donc APRÈS le bloc, pas dans un `except*` (qui serait du code mort, non couvrable). Une VRAIE exception d'un travailleur, elle, propagerait en `ExceptionGroup` — on ne la masque pas. La phase d'arrêt (unwind + fermeture LIFO du stack) est sous UN `asyncio.timeout(shutdown_deadline_seconds)` ; un dépassement → `TimeoutError` ; le `finally` tente un `aclose()` best-effort (`suppress(BaseException)`) pour ne pas re-bloquer.
@@ -109,7 +113,7 @@ pyproject.toml                             # Modify : marqueur orchestration_int
 > **DÉCISION 9 — Le test du nudge AWAIT le signal (le test EST le consommateur).**
 > Le hub `DecisionSignal` n'a pas encore de consommateur de prod (plans D/E). Pour qu'il ne soit pas du code mort, un test `await hub.wait(subject)` dans une task, vérifie qu'elle ne se résout pas, déclenche `record_observation` (qui `signal`e post-commit), puis `await wait_for(waiter)`. **Ce test EST le consommateur — pas du churn pour les reviewers.**
 
-> **Note couverture (gate 100 % branch — points chauds) :** stubs de Protocol **une ligne** (`def m(...) -> T: ...`). Cas exercés des DEUX côtés : `backoff_delay` (attempt ≤ 1 / > 1, cap atteint / non) ; `BackoffRegistry` (record/grow/reset, clés indépendantes, reset clé inconnue, `is_in_backoff` clé connue future/passée + clé inconnue, jitter étend le délai, snapshot↔load round-trip) ; `SeededRng.jitter` (dans span / reproductible / span ≤ 0 → 0) ; `effective_coverage` (vide/aucun/tous/mixte) ; `generate_keywords` (token court écarté, doublon, cibles vides) ; `record_observation` (écarté/nouveau/inchangé/changé/`RepositoryError` absorbée) ; `SearchWorker` (connect ok/échec→backoff instance, instance en backoff → skip sans connecter, canal en backoff → skip, backoff expiré → re-run, déjà connecté, search ok/`SearchFailed`→backoff canal/`Unreachable`→down, poll : break immédiat / boucle puis budget / boucle puis break / progress None, fetch multi-obs dont une écartée) ; `run_search_cycle` (1 instance / 2 workers / une aveugle / log blind / backoff persisté en fin de cycle) ; `app.py` (cycle propre / shutdown pendant sleep / annulation en vol / 2e signal / délai dépassé / node_id override / default_client_factory) ; `__main__` (run propre / config invalide / fichier absent / défauts) ; config parsers (chaque branche fail-fast, dont `jitter_ratio` 0/négatif) ; `last_decision` (None / le plus récent / hash absent) ; `scheduler_state` (lecture 0 / round-trip / overwrite / naïf refusé / panne atomique ; backoff vide / round-trip via repo neuf / overwrite / panne atomique).
+> **Note couverture (gate 100 % branch — points chauds) :** stubs de Protocol **une ligne** (`def m(...) -> T: ...`). Cas exercés des DEUX côtés : `backoff_delay` (attempt ≤ 1 / > 1, cap atteint / non) ; `BackoffRegistry` (record/grow/reset, clés indépendantes, reset clé inconnue, `is_in_backoff` clé connue future/passée + clé inconnue, jitter étend le délai, snapshot↔load round-trip) ; `SeededRng.jitter` (dans span / reproductible / span ≤ 0 → 0) ; `effective_coverage` (vide/aucun/tous/mixte) ; `generate_keywords` (token court écarté, doublon, cibles vides) ; `record_observation` (écarté/nouveau/inchangé/changé/`RepositoryError` absorbée) ; `SearchWorker` (connect ok/échec→backoff instance, instance en backoff → skip sans connecter, canal en backoff → skip, backoff expiré → re-run, déjà connecté, search ok/`SearchFailed`→backoff canal/`Unreachable`→down, poll : break immédiat / boucle puis budget / boucle puis break / progress None, fetch multi-obs dont une écartée ; `pause_between_items` min+jitter / min==max fixe) ; `run_search_cycle` (1 instance / 2 workers / une aveugle / log blind / backoff persisté en fin de cycle ; pause « between not after » à 1 worker / file vidée sautée à 2 workers) ; `app.py` (cycle propre / shutdown sur sleep inter-cycle long ≥ 100s / annulation en vol / 2e signal / délai dépassé / node_id override / default_client_factory) ; `__main__` (run propre / config invalide / fichier absent / défauts) ; config parsers (chaque branche fail-fast, dont `jitter_ratio` 0/négatif) ; `last_decision` (None / le plus récent / hash absent) ; `scheduler_state` (lecture 0 / round-trip / overwrite / naïf refusé / panne atomique ; backoff vide / round-trip via repo neuf / overwrite / panne atomique).
 
 > **Note typage (`mypy --strict` sur src ET tests) :** tous les tests `-> None`, params typés, async annotés `@pytest.mark.asyncio`. Le `client_factory` injecté en test est typé `object` dans les helpers (les fakes le satisfont structurellement) avec un unique `# type: ignore[arg-type]` au point d'assemblage `CrawlerApp(...)`. Le faux `MuleClient` satisfait STRUCTURELLEMENT le port (aucun héritage). `coro.close()` dans le faux `asyncio.run` porte `# type: ignore[attr-defined]`. Le `matcher_config` fixture est typé `MatcherConfig` (pas `object`) → zéro ignore sur les appels du moteur.
 
@@ -2469,8 +2473,9 @@ class FakeRng:
     """Rng faux DÉTERMINISTE : shuffle identité + jitter constant (``jitter_value``).
 
     Le shuffle conserve l'ordre (pas de dépendance au seed dans les tests). ``jitter`` rend
-    toujours ``jitter_value`` (0.0 par défaut → backoff = délai NOMINAL exact, assertions
-    exactes possibles)."""
+    ``jitter_value`` (0.0 par défaut → backoff/pause = valeur NOMINALE exacte), mais respecte
+    le CONTRAT du port comme le vrai ``SeededRng`` : ``span <= 0`` → ``0.0`` (sinon le test
+    de pause min==max mentirait sur le comportement réel)."""
 
     def __init__(self, *, jitter_value: float = 0.0) -> None:
         self._jitter_value = jitter_value
@@ -2481,6 +2486,8 @@ class FakeRng:
 
     def jitter(self, span: float) -> float:
         self.jitter_spans.append(span)
+        if span <= 0:
+            return 0.0
         return self._jitter_value
 
 
@@ -2843,12 +2850,13 @@ git commit -m "feat(application): pipeline record_observations (record→eval→
 - Create: `src/emule_indexer/application/search_worker.py`
 - Create: `tests/application/test_search_worker.py`
 
-> Un travailleur par instance (spec §3). Par item : **consulte le backoff** (SAUTE l'item si l'instance OU le canal est en backoff jusqu'à `retry_after`) → connexion (reconnexion si down) → `start_search` → polling borné → `fetch_results` → pipeline par obs. `MuleUnreachableError` → instance down + backoff PAR INSTANCE ; `MuleSearchFailedError` → backoff PAR (instance, canal). Le `BackoffRegistry` est **PARTAGÉ** (injecté via `WorkerDeps.backoff`), construit avec `(policy, clock, rng)` ; il calcule `retry_after = clock.now() + backoff_delay + jitter` (jitter via le port `Rng`), expose `is_in_backoff`/`record_failure`/`reset` + `snapshot`/`load_from` pour la persistance. « Skip jusqu'à `retry_after` » remplace l'ancien « sleep du délai » (l'event loop reste libre). `WorkerPolicy` = primitifs (DÉCISION 5), dont `backoff_jitter_ratio`. Catch UNIQUEMENT des exceptions de PORT. Tests : `FakeRng(jitter_value)` déterministe + `FakeClock.advance()` (fait passer `retry_after` sans dormir).
+> Un travailleur par instance (spec §3). Par item : **consulte le backoff** (SAUTE l'item si l'instance OU le canal est en backoff jusqu'à `retry_after`) → connexion (reconnexion si down) → `start_search` → polling borné → `fetch_results` → pipeline par obs. `MuleUnreachableError` → instance down + backoff PAR INSTANCE ; `MuleSearchFailedError` → backoff PAR (instance, canal). Le `BackoffRegistry` est **PARTAGÉ** (injecté via `WorkerDeps.backoff`), construit avec `(policy, clock, rng)` ; il calcule `retry_after = clock.now() + backoff_delay + jitter` (jitter via le port `Rng`), expose `is_in_backoff`/`record_failure`/`reset` + `snapshot`/`load_from` pour la persistance. « Skip jusqu'à `retry_after` » remplace l'ancien « sleep du délai » (l'event loop reste libre). `WorkerPolicy` = primitifs (DÉCISION 5), dont `backoff_jitter_ratio` ET `keyword_pause_min/max_seconds` ; `WorkerDeps` porte `rng` (pour le jitter de la pause). **`pause_between_items`** (DÉCISION 5bis) dort `min + rng.jitter(max − min)` via `clock.sleep` (réutilise `Rng.jitter` : `span ≤ 0` quand min==max → pause fixe) — câblée par le drain ENTRE deux items (Task 14), pas ici dans `run_task`. Catch UNIQUEMENT des exceptions de PORT. Tests : `FakeRng(jitter_value)` déterministe (respecte le contrat `span ≤ 0 → 0`) + `FakeClock.advance()` (fait passer `retry_after` sans dormir).
 
 - [ ] **Step 1: Écrire le test qui échoue**
 
 `tests/application/test_search_worker.py` :
 ```python
+import dataclasses
 import sqlite3
 
 import pytest
@@ -2878,6 +2886,7 @@ _HASH = "31d6cfe0d16ae931b73c59d7e0c089c0"
 _DL_NAME = "Keroro N°062A Les demoiselles cambrioleuses.avi"
 
 # jitter_ratio 0.0 + FakeRng(jitter_value=0.0) → backoff = délai NOMINAL exact (assertions nettes).
+# keyword_pause 1.0..3.0 : pause inter-mots-clés = 1.0 + jitter(2.0) (1.0 fixe avec FakeRng(0.0)).
 _POLICY = WorkerPolicy(
     backoff_base_seconds=2.0,
     backoff_cap_seconds=60.0,
@@ -2885,6 +2894,8 @@ _POLICY = WorkerPolicy(
     backoff_jitter_ratio=0.0,
     poll_budget_seconds=10.0,
     poll_interval_seconds=5.0,
+    keyword_pause_min_seconds=1.0,
+    keyword_pause_max_seconds=3.0,
 )
 
 
@@ -2908,13 +2919,17 @@ def _deps(
     engine: MatchingEngine,
     clock: FakeClock,
     backoff: BackoffRegistry,
+    *,
+    rng: FakeRng | None = None,
+    policy: WorkerPolicy = _POLICY,
 ) -> WorkerDeps:
     return WorkerDeps(
         catalog=catalog,
         engine=engine,
         signal=RecordingSignal(),
         clock=clock,
-        policy=_POLICY,
+        rng=rng or FakeRng(),
+        policy=policy,
         backoff=backoff,
     )
 
@@ -2958,14 +2973,7 @@ def test_backoff_registry_unknown_key_is_not_in_backoff() -> None:
 
 def test_backoff_registry_jitter_extends_the_delay() -> None:
     clock = FakeClock()
-    policy = WorkerPolicy(
-        backoff_base_seconds=2.0,
-        backoff_cap_seconds=60.0,
-        backoff_factor=2.0,
-        backoff_jitter_ratio=0.5,  # jitter dans [0, 0.5 * délai)
-        poll_budget_seconds=10.0,
-        poll_interval_seconds=5.0,
-    )
+    policy = dataclasses.replace(_POLICY, backoff_jitter_ratio=0.5)  # jitter dans [0, 0.5*délai)
     rng = FakeRng(jitter_value=1.0)  # jitter constant de 1.0s
     registry = BackoffRegistry(policy, clock, rng)
     delay = registry.record_failure("k")
@@ -2985,6 +2993,41 @@ def test_backoff_registry_snapshot_and_load_round_trip() -> None:
     assert reborn.is_in_backoff("amule-1:kad") is False  # vide avant load
     reborn.load_from(snapshot)
     assert reborn.is_in_backoff("amule-1:kad") is True
+
+
+# --- pause inter-mots-clés (anti-rate-limit, spec §5/§7) ---
+
+
+@pytest.mark.asyncio
+async def test_pause_between_items_sleeps_min_plus_jitter(
+    catalog: SqliteCatalogRepository, engine: MatchingEngine
+) -> None:
+    # span = max - min = 3 - 1 = 2 ; FakeRng(jitter_value=0.5) → pause = 1.0 + 0.5 = 1.5.
+    clock = FakeClock()
+    rng = FakeRng(jitter_value=0.5)
+    deps = _deps(catalog, engine, clock, _registry(clock), rng=rng)
+    worker = SearchWorker("amule-1", FakeMuleClient(), deps)
+    await worker.pause_between_items()
+    assert clock.sleeps == [1.5]
+    assert rng.jitter_spans == [2.0]  # span passé au jitter = max - min
+
+
+@pytest.mark.asyncio
+async def test_pause_with_equal_bounds_is_a_fixed_pause(
+    catalog: SqliteCatalogRepository, engine: MatchingEngine
+) -> None:
+    # min == max → span 0 → jitter(0) == 0 (contrat du port, respecté par FakeRng/SeededRng)
+    # → pause FIXE = min, indépendante du jitter (même un jitter énorme n'a aucun effet).
+    clock = FakeClock()
+    fixed = dataclasses.replace(
+        _POLICY, keyword_pause_min_seconds=2.0, keyword_pause_max_seconds=2.0
+    )
+    rng = FakeRng(jitter_value=99.0)
+    deps = _deps(catalog, engine, clock, _registry(clock), rng=rng, policy=fixed)
+    worker = SearchWorker("amule-1", FakeMuleClient(), deps)
+    await worker.pause_between_items()
+    assert clock.sleeps == [2.0]  # pause fixe = min, jitter inopérant
+    assert rng.jitter_spans == [0.0]
 
 
 # --- SearchWorker ---
@@ -3265,6 +3308,9 @@ class WorkerPolicy:
 
     ``backoff_jitter_ratio`` : fraction du délai nominal tirée en jitter additionnel
     (anti-thundering-herd, spec §3) — p.ex. 0.3 ⇒ jitter dans ``[0, 0.3 * délai)``.
+    ``keyword_pause_min_seconds``/``keyword_pause_max_seconds`` : bornes (min ≤ max) de la
+    PAUSE JITTERÉE inter-mots-clés (spec §5/§7, anti-rate-limit eD2k) — un délai
+    ``min + rng.jitter(max - min)`` est dormi ENTRE deux items d'un même travailleur.
     """
 
     backoff_base_seconds: float
@@ -3273,6 +3319,8 @@ class WorkerPolicy:
     backoff_jitter_ratio: float
     poll_budget_seconds: float
     poll_interval_seconds: float
+    keyword_pause_min_seconds: float
+    keyword_pause_max_seconds: float
 
 
 class BackoffRegistry:
@@ -3334,13 +3382,16 @@ class WorkerDeps:
     """Dépendances partagées d'un travailleur (la composition les assemble une fois).
 
     ``backoff`` est le registre PARTAGÉ (même instance pour tous les travailleurs + le cycle,
-    qui le persiste). Writer unique sur l'event loop → aucune course (spec §3).
+    qui le persiste). ``rng`` sert au jitter de la pause inter-mots-clés (le backoff a son
+    propre accès au RNG via le registre ; les deux pointent la même instance partagée).
+    Writer unique sur l'event loop → aucune course (spec §3).
     """
 
     catalog: CatalogRepository
     engine: MatchingEngine
     signal: DecisionSignal
     clock: Clock
+    rng: Rng
     policy: WorkerPolicy
     backoff: "BackoffRegistry"
 
@@ -3452,11 +3503,25 @@ class SearchWorker:
             task.channel,
             changed,
         )
+
+    async def pause_between_items(self) -> None:
+        """Dort une PAUSE JITTERÉE inter-mots-clés (spec §5/§7, anti-rate-limit eD2k).
+
+        Délai = ``keyword_pause_min + rng.jitter(keyword_pause_max - keyword_pause_min)``
+        (réutilise le contrat ``Rng.jitter`` : ``[0, span)`` ; ``span ≤ 0`` quand min == max
+        → jitter nul → pause FIXE = min). Espace les recherches d'un même travailleur pour
+        éviter qu'``amuled`` se fasse bannir d'un serveur eD2k (spec §7). Appelée par le
+        drain ENTRE deux items, jamais après le dernier (l'appelant saute la file vidée).
+        """
+        policy = self._deps.policy
+        span = policy.keyword_pause_max_seconds - policy.keyword_pause_min_seconds
+        delay = policy.keyword_pause_min_seconds + self._deps.rng.jitter(span)
+        await self._deps.clock.sleep(delay)
 ```
 
 - [ ] **Step 4: Vérifier puis gate**
 
-Run: `uv run pytest tests/application/test_search_worker.py -q --no-cov` → PASS (19 tests).
+Run: `uv run pytest tests/application/test_search_worker.py -q --no-cov` → PASS (21 tests).
 Run: gate complet → tout vert, 100 %.
 
 - [ ] **Step 5: Commit**
@@ -3474,7 +3539,7 @@ git commit -m "feat(application): SearchWorker (pool, backoff partagé persistab
 - Create: `src/emule_indexer/application/run_search_cycle.py`
 - Create: `tests/application/test_run_search_cycle.py`
 
-> Un cycle (spec §4) : statut → `effective_coverage` (DÉCISION 4 : traduit `NetworkStatus`→bool ici) → `generate_keywords` → `shuffle_for_cycle` → fan-out (mot-clé × 2 canaux) dans une `asyncio.Queue` → N travailleurs drainent sous `TaskGroup` (sentinelle `None` par travailleur après `queue.join()`) → EN FIN DE CYCLE : `write_cycle_state(index+1, now)` ET `save_channel_backoff(backoff.snapshot())` — l'index ET le backoff persistés ENSEMBLE (DÉCISION 7). `run_search_cycle` reçoit le `BackoffRegistry` PARTAGÉ. Vérif empiriques 1 (worker pool), 9 (ownership), 10-11 (backoff persisté).
+> Un cycle (spec §4) : statut → `effective_coverage` (DÉCISION 4 : traduit `NetworkStatus`→bool ici) → `generate_keywords` → `shuffle_for_cycle` → fan-out (mot-clé × 2 canaux) dans une `asyncio.Queue` → N travailleurs drainent sous `TaskGroup` (sentinelle `None` par travailleur après `queue.join()`) → EN FIN DE CYCLE : `write_cycle_state(index+1, now)` ET `save_channel_backoff(backoff.snapshot())` — l'index ET le backoff persistés ENSEMBLE (DÉCISION 7). Le drain `_worker_loop` appelle `worker.pause_between_items()` ENTRE deux items réels (garde `not queue.empty()` → JAMAIS après le dernier, DÉCISION 5bis : anti-rate-limit). `run_search_cycle` reçoit le `BackoffRegistry` PARTAGÉ. Vérif empiriques 1 (worker pool), 9 (ownership), 10-11 (backoff persisté), 13 (pause « between not after »).
 
 - [ ] **Step 1: Écrire le test qui échoue**
 
@@ -3509,6 +3574,9 @@ _HASH = "31d6cfe0d16ae931b73c59d7e0c089c0"
 _DL_NAME = "Keroro N°062A Les demoiselles cambrioleuses.avi"
 _TARGETS = (TargetSegment(season=2, number=62, segment="A", title="Les demoiselles cambrioleuses"),)
 
+# keyword_pause 1.0..1.0 (min == max) → pause FIXE de 1.0s (jitter span 0) : chaque pause
+# inter-mots-clés ajoute EXACTEMENT 1.0s aux clock.sleeps, ce qui rend la pause OBSERVABLE
+# et l'assertion « between not after » exacte.
 _POLICY = WorkerPolicy(
     backoff_base_seconds=2.0,
     backoff_cap_seconds=60.0,
@@ -3516,6 +3584,8 @@ _POLICY = WorkerPolicy(
     backoff_jitter_ratio=0.0,
     poll_budget_seconds=10.0,
     poll_interval_seconds=5.0,
+    keyword_pause_min_seconds=1.0,
+    keyword_pause_max_seconds=1.0,
 )
 
 
@@ -3562,6 +3632,7 @@ def _deps(
         engine=engine,
         signal=RecordingSignal(),
         clock=clock,
+        rng=_NoopRng(),
         policy=_POLICY,
         backoff=backoff,
     )
@@ -3689,11 +3760,17 @@ async def test_channel_backoff_is_persisted_at_cycle_end(
     # Une recherche échoue (EC_OP_FAILED) → le canal entre en backoff DANS le registre
     # partagé ; le cycle PERSISTE le snapshot en fin de cycle (spec §3/§7). Une nouvelle
     # instance de repo (simulant un redémarrage) relit ce backoff.
+    from emule_indexer.ports.mule_client import MuleSearchFailedError, SearchChannel
+
+    class _AlwaysFails(FakeMuleClient):
+        """Échoue à CHAQUE recherche → les canaux RESTENT en backoff (jamais reset)."""
+
+        async def start_search(self, keyword: str, channel: SearchChannel) -> None:
+            raise MuleSearchFailedError("EC_OP_FAILED")
+
     clock = FakeClock()
     backoff = BackoffRegistry(_POLICY, clock, FakeRng())
-    from tests.application.fakes import make_search_failed
-
-    client = FakeMuleClient(search_failures=[make_search_failed(), make_search_failed()])
+    client = _AlwaysFails()
     worker = _worker("amule-1", client, _deps(catalog, engine, clock, backoff))
     scheduler_state = SqliteSchedulerStateRepository(local_connection)
     await run_search_cycle(
@@ -3708,8 +3785,77 @@ async def test_channel_backoff_is_persisted_at_cycle_end(
         clock=clock,
     )
     persisted = SqliteSchedulerStateRepository(local_connection).load_channel_backoff()
-    # Au moins un canal de amule-1 a un backoff persisté (global et/ou kad selon l'ordre).
+    # Les deux canaux de amule-1 sont en backoff persisté (toutes les recherches échouent).
     assert any(key.startswith("amule-1:") for key in persisted)
+
+
+@pytest.mark.asyncio
+async def test_one_worker_pauses_between_items_not_after_the_last(
+    catalog: SqliteCatalogRepository,
+    local_connection: sqlite3.Connection,
+    engine: MatchingEngine,
+) -> None:
+    # UN seul travailleur draine TOUS les items → la pause inter-mots-clés (fixe 1.0s,
+    # min==max ; search_progress=100 → aucun sleep de polling) tombe ENTRE deux items et
+    # JAMAIS après le dernier : exactement (N_items - 1) pauses de 1.0s.
+    from emule_indexer.application.run_search_cycle import _CHANNELS
+    from emule_indexer.domain.search.keywords import generate_keywords
+
+    n_items = len(generate_keywords(_TARGETS)) * len(_CHANNELS)
+    clock = FakeClock()
+    backoff = BackoffRegistry(_POLICY, clock, FakeRng())
+    client = FakeMuleClient()  # search_progress=100 → pas de sleep de polling
+    worker = _worker("amule-1", client, _deps(catalog, engine, clock, backoff))
+    scheduler_state = SqliteSchedulerStateRepository(local_connection)
+    await run_search_cycle(
+        workers=[worker],
+        clients=[client],
+        targets=_TARGETS,
+        rng=_NoopRng(),
+        node_id="node-A",
+        cycle_index=0,
+        scheduler_state=scheduler_state,
+        backoff=backoff,
+        clock=clock,
+    )
+    assert clock.sleeps == [1.0] * (n_items - 1)  # entre chaque item, pas après le dernier
+
+
+@pytest.mark.asyncio
+async def test_drained_queue_skips_the_final_pause_with_two_workers(
+    catalog: SqliteCatalogRepository,
+    local_connection: sqlite3.Connection,
+    engine: MatchingEngine,
+) -> None:
+    # Deux travailleurs PARTAGENT l'horloge fausse : la pause n'est dormie qu'entre deux
+    # items réels (le garde « queue non vide »). Le total des pauses est STRICTEMENT inférieur
+    # au nombre d'items (au moins le dernier item de chaque drain ne déclenche pas de pause).
+    from emule_indexer.application.run_search_cycle import _CHANNELS
+    from emule_indexer.domain.search.keywords import generate_keywords
+
+    n_items = len(generate_keywords(_TARGETS)) * len(_CHANNELS)
+    clock = FakeClock()
+    backoff = BackoffRegistry(_POLICY, clock, FakeRng())
+    client_a = FakeMuleClient()
+    client_b = FakeMuleClient()
+    deps = _deps(catalog, engine, clock, backoff)
+    workers = [_worker("amule-1", client_a, deps), _worker("amule-2", client_b, deps)]
+    scheduler_state = SqliteSchedulerStateRepository(local_connection)
+    await run_search_cycle(
+        workers=workers,
+        clients=[client_a, client_b],
+        targets=_TARGETS,
+        rng=_NoopRng(),
+        node_id="node-A",
+        cycle_index=0,
+        scheduler_state=scheduler_state,
+        backoff=backoff,
+        clock=clock,
+    )
+    # Toutes les pauses valent 1.0s ; il y en a STRICTEMENT moins que d'items (la dernière de
+    # chaque travailleur est sautée car la file est vidée).
+    assert all(s == 1.0 for s in clock.sleeps)
+    assert 0 < len(clock.sleeps) < n_items
 ```
 
 - [ ] **Step 2: Lancer pour vérifier l'échec**
@@ -3782,13 +3928,21 @@ async def _aggregate_coverage(clients: Sequence[MuleClient]) -> None:
 
 
 async def _worker_loop(worker: SearchWorker, queue: "asyncio.Queue[SearchTask | None]") -> None:
-    """Draine la queue jusqu'à la sentinelle ``None`` (un travailleur)."""
+    """Draine la queue jusqu'à la sentinelle ``None`` (un travailleur).
+
+    PAUSE JITTERÉE inter-mots-clés (spec §5/§7) ENTRE deux items, JAMAIS après le dernier :
+    si la file est déjà vidée après cet item, on saute la pause (inutile de dormir avant de
+    sortir / d'attendre une sentinelle). La pause espace les recherches d'un même travailleur
+    → ``amuled`` évite de se faire bannir d'un serveur eD2k.
+    """
     while True:
         task = await queue.get()
         try:
             if task is None:
                 return
             await worker.run_task(task)
+            if not queue.empty():  # encore des items réels → on espace avant le suivant
+                await worker.pause_between_items()
         finally:
             queue.task_done()
 
@@ -3835,7 +3989,7 @@ async def run_search_cycle(
 
 - [ ] **Step 4: Vérifier puis gate**
 
-Run: `uv run pytest tests/application/test_run_search_cycle.py -q --no-cov` → PASS (5 tests).
+Run: `uv run pytest tests/application/test_run_search_cycle.py -q --no-cov` → PASS (7 tests).
 Run: gate complet → tout vert, 100 %.
 
 - [ ] **Step 5: Commit**
@@ -3932,7 +4086,7 @@ rules:
   - { name: keroro_large,        tier: catalog,  any: [keroro_titar] }
 ```
 
-- [ ] **Step 3: Modifier `.gitignore`** — ajouter, après le bloc `*.db*` :
+- [ ] **Step 3: Modifier `.gitignore`** — ajouter, à la fin (après les lignes `*.db`/`*.db-wal`/`*.db-shm`) :
 ```
 # Config locale (machine + secret) — JAMAIS versionnée (spec orchestration §5).
 # Seul config/local.example.yaml (modèle) est suivi.
@@ -4109,7 +4263,9 @@ async def test_second_signal_forces_exit(tmp_path: Path, matcher_config: Matcher
 
 
 class _ShutdownOnSleepClock(FakeClock):
-    """Horloge dont le ``sleep`` déclenche l'arrêt → la boucle sort PROPREMENT au tour suivant."""
+    """Horloge qui déclenche l'arrêt sur le LONG sleep inter-cycle (≥ 100s), PAS sur les
+    courtes pauses inter-mots-clés (1-2s) → le cycle se TERMINE, puis la boucle re-teste sa
+    condition et SORT d'elle-même (sans annulation) au tour suivant."""
 
     def __init__(self, app_holder: dict[str, CrawlerApp]) -> None:
         super().__init__()
@@ -4117,7 +4273,8 @@ class _ShutdownOnSleepClock(FakeClock):
 
     async def sleep(self, seconds: float) -> None:
         await super().sleep(seconds)
-        self._app_holder["app"]._shutdown.set()
+        if seconds >= 100.0:  # le sommeil inter-cycle (cycle_interval − écoulé), pas une pause
+            self._app_holder["app"]._shutdown.set()
 
 
 @pytest.mark.asyncio
@@ -4291,6 +4448,8 @@ def _build_policy(config: CrawlerConfig) -> WorkerPolicy:
         backoff_jitter_ratio=config.backoff.jitter_ratio,
         poll_budget_seconds=config.search_poll_budget_seconds,
         poll_interval_seconds=config.search_poll_interval_seconds,
+        keyword_pause_min_seconds=config.keyword_pause_min_seconds,
+        keyword_pause_max_seconds=config.keyword_pause_max_seconds,
     )
 
 
@@ -4436,6 +4595,7 @@ class CrawlerApp:
                 engine=engine,
                 signal=self._signal,
                 clock=self._clock,
+                rng=self._rng,
                 policy=policy,
                 backoff=backoff,
             )
@@ -4487,9 +4647,12 @@ git commit -m "feat(composition): CrawlerApp (pool, repos uniques, arrêt observ
 
 **Files:**
 - Create: `src/emule_indexer/composition/__main__.py`
+- Create: `src/emule_indexer/__main__.py` (shim de PAQUET : rend `python -m emule_indexer` opérant)
 - Create: `tests/composition/test_main.py`
 
 > Charge les 4 configs (fail-fast §5/§14 → code 1 sur config invalide), assemble les adapters RÉELS (`AsyncioClock`/`SeededRng`/`AsyncioDecisionSignal`), `asyncio.run(app.run())`. Chemins en arguments (`--crawler`/`--local`/`--targets`/`--matcher`, défauts `config/*.yaml`).
+>
+> **IMPORTANT (sinon la DoD §9.4 échoue) :** `python -m emule_indexer` exécute `src/emule_indexer/__main__.py` (le `__main__` du PAQUET), PAS `composition/__main__.py`. Sans un shim de paquet, seule la forme `python -m emule_indexer.composition` marcherait — or la spec §2/§4/§9 promet bien `python -m emule_indexer`. On crée donc un `src/emule_indexer/__main__.py` minimal qui délègue à `composition.main`.
 
 - [ ] **Step 1: Écrire le test qui échoue**
 
@@ -4576,12 +4739,20 @@ def test_default_args_point_at_config_dir() -> None:
     namespace = entry._parse_args([])
     assert namespace.crawler == Path("config/crawler.yaml")
     assert namespace.local == Path("config/local.yaml")
+
+
+def test_package_main_shim_reexports_main() -> None:
+    # `python -m emule_indexer` exécute le __main__ du PAQUET : il doit exposer la MÊME
+    # fonction `main` que composition.__main__ (sinon la DoD §9.4 n'est pas tenue).
+    from emule_indexer import __main__ as package_entry
+
+    assert package_entry.main is entry.main
 ```
 
 - [ ] **Step 2: Lancer pour vérifier l'échec**
 
 Run: `uv run pytest tests/composition/test_main.py -q --no-cov`
-Expected: FAIL — `ModuleNotFoundError: …composition.__main__`.
+Expected: FAIL — `ModuleNotFoundError: …composition.__main__` (puis, une fois `composition/__main__.py` créé, `ModuleNotFoundError` sur `emule_indexer.__main__` tant que le shim n'existe pas).
 
 - [ ] **Step 3: Écrire `__main__.py`**
 
@@ -4669,17 +4840,37 @@ if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())
 ```
 
-> **Note couverture** : la ligne `if __name__ == "__main__":` est marquée `# pragma: no cover` (jamais exécutée sous pytest) ; `_SpyApp.run` aussi (la coroutine est `close()`-ée par le faux `asyncio.run`, jamais awaitée). Le reste est couvert par les 5 tests.
+- [ ] **Step 3bis: Écrire le shim de paquet** (`python -m emule_indexer`)
+
+`src/emule_indexer/__main__.py` :
+```python
+"""Shim de paquet : rend ``python -m emule_indexer`` opérant (spec §2/§4/§9.4).
+
+``python -m emule_indexer`` exécute le ``__main__`` du PAQUET (ce fichier), pas celui du
+sous-paquet ``composition``. On ré-exporte ``main`` (point d'entrée réel, dans
+``composition.__main__``) et on l'appelle sous ``__name__ == "__main__"``.
+"""
+
+from emule_indexer.composition.__main__ import main
+
+__all__ = ["main"]
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())
+```
+
+> **Note couverture** : dans les DEUX fichiers, la ligne `if __name__ == "__main__":` est marquée `# pragma: no cover` (jamais exécutée sous pytest) ; `_SpyApp.run` aussi (la coroutine est `close()`-ée par le faux `asyncio.run`, jamais awaitée). Le `from … import main` du shim est couvert par `test_package_main_shim_reexports_main`. Le reste est couvert par les 6 tests.
 
 - [ ] **Step 4: Vérifier puis gate**
 
-Run: `uv run pytest tests/composition/test_main.py -q --no-cov` → PASS (5 tests).
+Run: `uv run pytest tests/composition/test_main.py -q --no-cov` → PASS (6 tests).
 Run: gate complet → tout vert, 100 %.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/emule_indexer/composition/__main__.py tests/composition/test_main.py
+git add src/emule_indexer/composition/__main__.py src/emule_indexer/__main__.py tests/composition/test_main.py
 git commit -m "feat(composition): point d'entrée python -m emule_indexer (charge config, fail-fast, run)"
 ```
 
@@ -4817,8 +5008,8 @@ async def test_real_loop_runs_one_cycle_and_stops(amuled: tuple[str, int], tmp_p
         cycle_interval_seconds=300.0,
         search_poll_budget_seconds=10.0,
         search_poll_interval_seconds=5.0,
-        keyword_pause_min_seconds=1.0,
-        keyword_pause_max_seconds=2.0,
+        keyword_pause_min_seconds=0.01,  # pauses minuscules (le test ne mesure pas le spacing)
+        keyword_pause_max_seconds=0.05,
         backoff=BackoffConfig(base_seconds=2.0, cap_seconds=60.0, factor=2.0, jitter_ratio=0.3),
         decision_poll_interval_seconds=5.0,
         shutdown_deadline_seconds=30.0,
@@ -4975,6 +5166,7 @@ git tag --list | grep orchestration
 | §2 Pool de travailleurs (1/instance, séquentiel à N=1) | Tasks 13 (`SearchWorker`), 14 (`run_search_cycle`), 15 (`CrawlerApp`) |
 | §2/§4 Cycle ordonnancé (statut→coverage→keywords→shuffle→fan-out→drain→avance→sommeil) | Tasks 4 (coverage), 2 (shuffle), 14 (cycle), 15 (sommeil jitteré dans `_run_loop`) |
 | §2/§3/§7 Backoff exponentiel+jitter par (instance, canal), **PERSISTÉ** dans `scheduler_state` | Tasks 3 (`backoff_delay` pur), 10 (`SeededRng.jitter`), 13 (`BackoffRegistry` partagé : jitter via `Rng`, skip jusqu'à `retry_after`, `snapshot`/`load_from`), 9 (`load/save_channel_backoff`, JSON KV), 14 (persistance en fin de cycle), 15 (registre partagé construit + rechargé au démarrage) |
+| §5/§7 Espacement anti-rate-limit : pause JITTERÉE inter-mots-clés (`keyword_pause`) | Tasks 11 (parse `keyword_pause_min/max`), 13 (`pause_between_items` = `min + rng.jitter(max−min)`), 14 (drain : ENTRE deux items, jamais après le dernier), 15 (`_build_policy` + `WorkerDeps.rng`) |
 | §2/§3 Pipeline par obs (record→eval→si verdict changé decision+nudge) | Task 12 (`record_observations`) |
 | §3 Anti-redondance par changement de verdict (`last_decision`) | Tasks 8 (`last_decision`/`DecisionRecord`), 12 (comparaison) |
 | §2/§5 Config YAML deux fichiers (`crawler.yaml`/`local.yaml` gitignoré + `local.example.yaml`) | Tasks 11 (parsers), 15 (fichiers + `.gitignore`) |
