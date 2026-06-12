@@ -1,4 +1,8 @@
-from emule_indexer.domain.matching.engine import Explanation, MatchDecision
+from emule_indexer.domain.matching.engine import (
+    DecisionRecord,
+    Explanation,
+    MatchDecision,
+)
 from emule_indexer.domain.observation import FileObservation
 from emule_indexer.ports.catalog_repository import CatalogRepository
 
@@ -15,6 +19,9 @@ class _StubRepository:
 
     def record_decision(self, ed2k_hash: str, decision: MatchDecision) -> None:
         self.decisions.append((ed2k_hash, decision))
+
+    def last_decision(self, ed2k_hash: str) -> DecisionRecord | None:
+        return None
 
 
 def test_protocol_is_satisfied_structurally() -> None:
@@ -38,5 +45,6 @@ def test_protocol_is_satisfied_structurally() -> None:
     )
     repository.record_observation(observation)
     repository.record_decision(observation.ed2k_hash, decision)
+    assert repository.last_decision(observation.ed2k_hash) is None
     assert stub.observations == [observation]
     assert stub.decisions == [(observation.ed2k_hash, decision)]

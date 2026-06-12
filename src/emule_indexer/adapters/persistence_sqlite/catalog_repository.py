@@ -26,7 +26,7 @@ from contextlib import suppress
 
 from emule_indexer.adapters.persistence_sqlite.connection import Clock, utc_iso, utc_now
 from emule_indexer.adapters.persistence_sqlite.errors import PersistenceError, wrap_sqlite_errors
-from emule_indexer.domain.matching.engine import MatchDecision
+from emule_indexer.domain.matching.engine import DecisionRecord, MatchDecision
 from emule_indexer.domain.observation import FileObservation
 
 _CANONICAL_HASH_RE = re.compile(r"[0-9a-f]{32}\Z")
@@ -44,6 +44,17 @@ INSERT INTO file_observations (
 _INSERT_DECISION = """
 INSERT INTO match_decisions (ed2k_hash, target_id, rule_name, tier, decided_at, node_id)
 VALUES (?, ?, ?, ?, ?, ?)
+"""
+
+# Dernier verdict connu pour un hash (anti-redondance, spec orchestration §3). Tri par
+# (decided_at, id) DÉCROISSANT : decided_at à largeur fixe rend l'ordre lexicographique
+# chronologique ; id départage deux décisions de la même microseconde (l'INSERT le plus
+# récent a l'id le plus grand). L'index idx_match_decisions_ed2k_hash sert le filtre.
+_SELECT_LAST_DECISION = """
+SELECT target_id, rule_name, tier FROM match_decisions
+WHERE ed2k_hash = ?
+ORDER BY decided_at DESC, id DESC
+LIMIT 1
 """
 
 
@@ -113,3 +124,17 @@ class SqliteCatalogRepository:
                     self._node_id,
                 ),
             )
+
+    def last_decision(self, ed2k_hash: str) -> DecisionRecord | None:
+        """Dernier verdict connu pour ce hash, ou ``None`` (jamais décidé) — LECTURE.
+
+        Anti-redondance (spec orchestration §3) : l'application compare ce
+        ``DecisionRecord`` au verdict frais et ne ré-``record_decision`` que s'il diffère.
+        Le hash n'est PAS validé canonique ici : c'est une lecture inoffensive (un hash
+        non canonique ne matche simplement rien → ``None``).
+        """
+        with wrap_sqlite_errors():
+            row = self._connection.execute(_SELECT_LAST_DECISION, (ed2k_hash,)).fetchone()
+        if row is None:
+            return None
+        return DecisionRecord(target_id=row[0], rule_name=row[1], tier=row[2])
