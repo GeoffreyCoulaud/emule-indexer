@@ -64,6 +64,12 @@ SET
 WHERE id = :task_id AND status = 'in_progress'
 """
 
+_RECLAIM = """
+UPDATE verification_tasks
+SET status = 'pending', claimed_at = NULL, lease_until = NULL
+WHERE status = 'in_progress' AND lease_until < ?
+"""
+
 
 class SqliteLocalStateRepository:
     """Implémentation SQLite du port ``LocalStateRepository`` (satisfaction STRUCTURELLE)."""
@@ -145,3 +151,9 @@ class SqliteLocalStateRepository:
             raise PersistenceError(
                 f"tâche {task_id} introuvable en in_progress (bug du code appelant)"
             )
+
+    def reclaim_expired(self) -> int:
+        """Repasse en ``pending`` toute ``in_progress`` dont la lease a expiré ; rend le nombre."""
+        with wrap_sqlite_errors():
+            cursor = self._connection.execute(_RECLAIM, (utc_iso(self._clock()),))
+        return cursor.rowcount

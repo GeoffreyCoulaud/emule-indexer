@@ -11,7 +11,7 @@ from emule_indexer.adapters.persistence_sqlite.errors import PersistenceError
 from emule_indexer.adapters.persistence_sqlite.local_state_repository import (
     SqliteLocalStateRepository,
 )
-from emule_indexer.ports.local_state_repository import ClaimedTask
+from emule_indexer.ports.local_state_repository import ClaimedTask, LocalStateRepository
 
 _START = datetime(2026, 6, 11, 12, 0, 0, tzinfo=UTC)
 _NODE_ID_QUERY = "SELECT value FROM node_runtime WHERE key = 'node_id'"
@@ -261,3 +261,58 @@ def test_enqueue_is_allowed_again_once_the_task_is_done(
     assert claimed is not None
     repository.complete_verification(claimed.task_id)
     assert repository.enqueue_verification("aaaa") is True  # done n'est PLUS actif
+
+
+# --- lease / reclaim (spec §6) ---------------------------------------------------------
+
+
+def test_reclaim_expired_requeues_only_expired_leases(
+    connection: sqlite3.Connection, clock: _FakeClock
+) -> None:
+    repository = SqliteLocalStateRepository(
+        connection, clock=clock, lease_duration=timedelta(minutes=15)
+    )
+    repository.enqueue_verification("expirée")
+    repository.claim_verification()  # lease jusqu'à 12:15
+    clock.advance(timedelta(minutes=10))
+    repository.enqueue_verification("fraîche")
+    repository.claim_verification()  # lease jusqu'à 12:25
+    clock.advance(timedelta(minutes=6))  # 12:16 : la 1re a expiré, pas la 2e
+    assert repository.reclaim_expired() == 1
+    rows = dict(connection.execute("SELECT ed2k_hash, status FROM verification_tasks").fetchall())
+    assert rows == {"expirée": "pending", "fraîche": "in_progress"}
+    reclaimed = repository.claim_verification()
+    assert reclaimed is not None
+    assert reclaimed.ed2k_hash == "expirée"
+    assert reclaimed.attempts == 2  # attempts compté AU CLAIM, le re-claim compte
+
+
+def test_reclaim_with_nothing_expired_returns_zero(
+    repository: SqliteLocalStateRepository,
+) -> None:
+    repository.enqueue_verification("aaaa")
+    repository.claim_verification()
+    assert repository.reclaim_expired() == 0  # lease encore valide : rien à récupérer
+
+
+def test_reclaim_ignores_done_and_dead_letter(
+    connection: sqlite3.Connection, clock: _FakeClock
+) -> None:
+    repository = SqliteLocalStateRepository(connection, clock=clock, max_attempts=1)
+    repository.enqueue_verification("finie")
+    done = repository.claim_verification()
+    assert done is not None
+    repository.complete_verification(done.task_id)
+    repository.enqueue_verification("poison")
+    poisoned = repository.claim_verification()
+    assert poisoned is not None
+    repository.fail_verification(poisoned.task_id)  # max_attempts=1 -> dead_letter direct
+    clock.advance(timedelta(days=1))  # toutes les leases seraient expirées depuis longtemps
+    assert repository.reclaim_expired() == 0
+
+
+def test_repository_satisfies_the_port_structurally(
+    repository: SqliteLocalStateRepository,
+) -> None:
+    port: LocalStateRepository = repository  # mypy prouve la satisfaction structurelle
+    assert port.claim_verification() is None
