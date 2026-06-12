@@ -18,6 +18,7 @@ dev = [
   "types-pyyaml>=6.0.12.20260518",
   "pytest-asyncio>=1.2",
   "testcontainers>=4.10",
+  "sqlfluff>=3.0",
 ]
 
 [build-system]
@@ -64,3 +65,10 @@ source = ["emule_indexer"]
 show_missing = true
 fail_under = 100
 exclude_also = ["if TYPE_CHECKING:"]
+
+[tool.sqlfluff.core]
+dialect = "sqlite"
+max_line_length = 100
+
+[tool.sqlfluff.rules.references.keywords]
+ignore_words = "key,value"
