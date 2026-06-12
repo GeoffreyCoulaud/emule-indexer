@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import sqlite3
 from collections.abc import Iterator
@@ -139,4 +140,54 @@ def test_record_observation_is_one_transaction(
     with pytest.raises(PersistenceError, match="panne injectée"):
         repository.record_observation(_observation(filename="__boom__"))
     # ATOMICITÉ : le INSERT OR IGNORE dans files a été défait avec la transaction.
+    assert connection.execute("SELECT count(*) FROM files").fetchone()[0] == 0
+    # Le repository reste UTILISABLE : rollback effectué, connexion hors transaction.
+    assert not connection.in_transaction
+    repository.record_observation(_observation())
+    assert connection.execute("SELECT count(*) FROM file_observations").fetchone()[0] == 1
+
+
+def test_record_observation_rejects_non_canonical_hash(
+    repository: SqliteCatalogRepository, connection: sqlite3.Connection
+) -> None:
+    # INSERT OR IGNORE avale SILENCIEUSEMENT une violation de CHECK (comportement SQLite
+    # documenté) : sans validation Python AVANT la transaction, un hash non canonique ne
+    # survivrait que grâce au pragma foreign_keys (diagnostic opaque), et une connexion
+    # sans ce pragma commettrait une observation ORPHELINE.
+    upper = dataclasses.replace(_observation(), ed2k_hash=_HASH.upper())
+    with pytest.raises(PersistenceError, match="hash eD2k non canonique"):
+        repository.record_observation(upper)
+    assert connection.execute("SELECT count(*) FROM files").fetchone()[0] == 0
+    assert connection.execute("SELECT count(*) FROM file_observations").fetchone()[0] == 0
+
+
+def test_rollback_on_non_sqlite_error_keeps_connection_usable(
+    repository: SqliteCatalogRepository, connection: sqlite3.Connection
+) -> None:
+    # Un surrogate isolé fait échouer le BINDING du paramètre (UnicodeEncodeError, qui
+    # N'EST PAS une sqlite3.Error) : sans rollback sur BaseException, la connexion
+    # resterait in_transaction=True et tout appel ultérieur échouerait définitivement
+    # (« cannot start a transaction within a transaction »).
+    with pytest.raises(UnicodeEncodeError):
+        repository.record_observation(_observation(filename="a\ud800"))
+    assert not connection.in_transaction
+    repository.record_observation(_observation())
+    assert connection.execute("SELECT count(*) FROM file_observations").fetchone()[0] == 1
+
+
+def test_outer_transaction_survives_record_observation_failure(
+    repository: SqliteCatalogRepository, connection: sqlite3.Connection
+) -> None:
+    # Contrat transaction imbriquée : le BEGIN du repository échoue (« cannot start a
+    # transaction within a transaction ») AVANT le try → AUCUN rollback n'est tenté,
+    # la transaction EXTÉRIEURE et ses lignes en attente SURVIVENT.
+    connection.execute("BEGIN")
+    connection.execute(
+        "INSERT INTO files (ed2k_hash, size_bytes, aich_hash) VALUES (?, 1, NULL)", (_HASH,)
+    )
+    with pytest.raises(PersistenceError, match="cannot start a transaction within a transaction"):
+        repository.record_observation(_observation())
+    assert connection.in_transaction  # la transaction extérieure est INTACTE
+    assert connection.execute("SELECT count(*) FROM files").fetchone()[0] == 1
+    connection.execute("ROLLBACK")
     assert connection.execute("SELECT count(*) FROM files").fetchone()[0] == 0

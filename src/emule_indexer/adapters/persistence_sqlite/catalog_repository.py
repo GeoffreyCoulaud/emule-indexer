@@ -8,15 +8,27 @@ en JSON LISTE de paires (``[["0x0308", "0"], …]``), ordre du fil et doublons p
 (spec §4) : ``INSERT OR IGNORE`` dans ``files`` (première vue gagne) puis ``INSERT`` dans
 ``file_observations`` — la taille OBSERVÉE est TOUJOURS écrite dans l'observation
 (déviation 1, spec §5 : une anomalie de taille ne doit pas devenir invisible).
+
+Le canon du hash (32 hex minuscules, canon v0.5.0) est validé EN PYTHON avant la
+transaction : ``INSERT OR IGNORE`` avale silencieusement une violation de CHECK
+(comportement SQLite documenté) — sans cette garde, un hash non canonique ne serait
+arrêté que par le pragma ``foreign_keys`` (diagnostic opaque), et une connexion sans
+ce pragma commettrait une observation ORPHELINE. Le rollback attrape ``BaseException``
+(même discipline que ``connection._open``) : une panne NON-sqlite au binding (p.ex.
+``UnicodeEncodeError`` sur un surrogate isolé) ne doit pas laisser la connexion
+``in_transaction`` — sinon le repository serait définitivement cassé.
 """
 
 import json
+import re
 import sqlite3
 from contextlib import suppress
 
 from emule_indexer.adapters.persistence_sqlite.connection import Clock, utc_iso, utc_now
-from emule_indexer.adapters.persistence_sqlite.errors import wrap_sqlite_errors
+from emule_indexer.adapters.persistence_sqlite.errors import PersistenceError, wrap_sqlite_errors
 from emule_indexer.domain.observation import FileObservation
+
+_CANONICAL_HASH_RE = re.compile(r"[0-9a-f]{32}\Z")
 
 _INSERT_FILE = "INSERT OR IGNORE INTO files (ed2k_hash, size_bytes, aich_hash) VALUES (?, ?, NULL)"
 
@@ -41,6 +53,8 @@ class SqliteCatalogRepository:
 
     def record_observation(self, observation: FileObservation) -> None:
         """UNE transaction : fichier (première vue gagne) + observation stampée."""
+        if not _CANONICAL_HASH_RE.fullmatch(observation.ed2k_hash):
+            raise PersistenceError(f"hash eD2k non canonique : {observation.ed2k_hash!r}")
         raw_meta = json.dumps(observation.raw_meta, ensure_ascii=False)
         observed_at = utc_iso(self._clock())
         with wrap_sqlite_errors():
@@ -68,7 +82,7 @@ class SqliteCatalogRepository:
                     ),
                 )
                 self._connection.execute("COMMIT")
-            except sqlite3.Error:
+            except BaseException:
                 with suppress(sqlite3.Error):
                     self._connection.execute("ROLLBACK")
                 raise
