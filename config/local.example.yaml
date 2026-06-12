@@ -1,0 +1,13 @@
+# Config LOCALE (machine + secret) — MODÈLE versionné (spec orchestration §5).
+# Copier en config/local.yaml (gitignoré) et renseigner les valeurs réelles.
+
+amules:                              # ≥ 1 instance amuled joignable par EC
+  - name: amule-1                    # étiquette UNIQUE (logging + clé de backoff)
+    host: gluetun                    # hôte EC (le conteneur gluetun expose le port d'amuled)
+    port: 4712                       # port EC
+    password: change-me              # mot de passe EC (secret)
+
+catalog_db_path: /data/catalog.db    # base catalogue (append-only, partageable)
+local_db_path: /data/local.db        # base opérationnelle (jamais fusionnée)
+
+# node_id: optionnel — override l'identité du nœud ; sinon celle de local.db est utilisée.

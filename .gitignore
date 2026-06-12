@@ -11,3 +11,6 @@ dist/
 *.db
 *.db-wal
 *.db-shm
+# Config locale (machine + secret) — JAMAIS versionnée (spec orchestration §5).
+# Seul config/local.example.yaml (modèle) est suivi.
+config/local.yaml

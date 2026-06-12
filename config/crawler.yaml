@@ -1,0 +1,16 @@
+# Politique du crawler (versionné, partageable — spec orchestration §5).
+# Toutes les durées en SECONDES. Défauts raisonnables pour un nœud d'observation.
+
+cycle_interval_seconds: 300.0        # cadence visée d'un cycle complet (5 min)
+search_poll_budget_seconds: 30.0     # attente max des résultats d'une recherche
+search_poll_interval_seconds: 5.0    # pas de polling de la progression
+keyword_pause_min_seconds: 1.0       # jitter inter-mots-clés : borne basse
+keyword_pause_max_seconds: 4.0       # jitter inter-mots-clés : borne haute
+decision_poll_interval_seconds: 5.0  # filet du nudge (consommateur futur, plans D/E)
+shutdown_deadline_seconds: 10.0      # borne dure de l'arrêt propre (spec §6)
+
+backoff:                             # backoff par (instance, canal) — exponentiel + jitter
+  base_seconds: 2.0                  #   (persisté dans scheduler_state, survit au redémarrage)
+  cap_seconds: 300.0
+  factor: 2.0
+  jitter_ratio: 0.3                  # jitter additionnel : jusqu'à +30 % du délai nominal
