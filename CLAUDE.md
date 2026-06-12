@@ -17,11 +17,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 uv sync --dev                          # install (also: scripts/setup-dev.sh installs the pre-push hook)
 
-# The full gate (must be green before any commit; the pre-push hook + CI run the same four):
+# The full gate (must be green before any commit; the pre-push hook + CI run the same five):
 uv run pytest -q                       # tests + 100% BRANCH coverage gate (fails the run under 100%)
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy
+uv run sqlfluff lint src               # lint SQL (migrations SQLite embarquées)
 ```
 
 **Running a single test:** the pytest config applies `--cov-fail-under=100` over the whole package, so running one file/test alone reports <100% and the run "fails" even when the tests pass. Disable coverage for focused runs:
