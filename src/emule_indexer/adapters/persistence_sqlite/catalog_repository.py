@@ -26,6 +26,7 @@ from contextlib import suppress
 
 from emule_indexer.adapters.persistence_sqlite.connection import Clock, utc_iso, utc_now
 from emule_indexer.adapters.persistence_sqlite.errors import PersistenceError, wrap_sqlite_errors
+from emule_indexer.domain.matching.engine import MatchDecision
 from emule_indexer.domain.observation import FileObservation
 
 _CANONICAL_HASH_RE = re.compile(r"[0-9a-f]{32}\Z")
@@ -38,6 +39,11 @@ INSERT INTO file_observations (
     media_length_sec, bitrate_kbps, codec, file_type, raw_meta,
     keyword, observed_at, node_id
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
+
+_INSERT_DECISION = """
+INSERT INTO match_decisions (ed2k_hash, target_id, rule_name, tier, decided_at, node_id)
+VALUES (?, ?, ?, ?, ?, ?)
 """
 
 
@@ -86,3 +92,24 @@ class SqliteCatalogRepository:
                 with suppress(sqlite3.Error):
                     self._connection.execute("ROLLBACK")
                 raise
+
+    def record_decision(self, ed2k_hash: str, decision: MatchDecision) -> None:
+        """INSERT seul (autocommit) ; fichier inconnu → FK violée → ``PersistenceError``.
+
+        Seules les 3 colonnes de ``MatchDecision`` sont persistées (spec moteur) ;
+        ``explanation`` est de l'explicabilité runtime, JAMAIS une colonne.
+        """
+        if not _CANONICAL_HASH_RE.fullmatch(ed2k_hash):
+            raise PersistenceError(f"hash eD2k non canonique : {ed2k_hash!r}")
+        with wrap_sqlite_errors():
+            self._connection.execute(
+                _INSERT_DECISION,
+                (
+                    ed2k_hash,
+                    decision.target_id,
+                    decision.rule_name,
+                    decision.tier,
+                    utc_iso(self._clock()),
+                    self._node_id,
+                ),
+            )

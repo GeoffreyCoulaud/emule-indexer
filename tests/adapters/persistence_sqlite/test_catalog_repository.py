@@ -10,7 +10,9 @@ import pytest
 from emule_indexer.adapters.persistence_sqlite.catalog_repository import SqliteCatalogRepository
 from emule_indexer.adapters.persistence_sqlite.connection import open_catalog
 from emule_indexer.adapters.persistence_sqlite.errors import PersistenceError
+from emule_indexer.domain.matching.engine import Explanation, MatchDecision
 from emule_indexer.domain.observation import FileObservation
+from emule_indexer.ports.catalog_repository import CatalogRepository
 
 _HASH = "31d6cfe0d16ae931b73c59d7e0c089c0"
 _NODE = "11111111-2222-3333-4444-555555555555"
@@ -191,3 +193,64 @@ def test_outer_transaction_survives_record_observation_failure(
     assert connection.execute("SELECT count(*) FROM files").fetchone()[0] == 1
     connection.execute("ROLLBACK")
     assert connection.execute("SELECT count(*) FROM files").fetchone()[0] == 0
+
+
+def _decision() -> MatchDecision:
+    return MatchDecision(
+        target_id="S2E062A",
+        rule_name="exact_062a",
+        tier="download",
+        explanation=Explanation(
+            target_id="S2E062A",
+            rules_fired=("exact_062a",),
+            tokens_matched=("keroro",),
+            coverage_values=(("titre", 0.91),),
+        ),
+    )
+
+
+def test_record_decision_round_trip(
+    repository: SqliteCatalogRepository, connection: sqlite3.Connection
+) -> None:
+    repository.record_observation(_observation())
+    repository.record_decision(_HASH, _decision())
+    row = connection.execute(
+        "SELECT ed2k_hash, target_id, rule_name, tier, decided_at, node_id FROM match_decisions"
+    ).fetchone()
+    assert row == (_HASH, "S2E062A", "exact_062a", "download", _FROZEN_ISO, _NODE)
+
+
+def test_explanation_is_never_persisted(
+    repository: SqliteCatalogRepository, connection: sqlite3.Connection
+) -> None:
+    repository.record_observation(_observation())
+    repository.record_decision(_HASH, _decision())
+    columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(match_decisions)").fetchall()
+    }
+    assert columns == {"id", "ed2k_hash", "target_id", "rule_name", "tier", "decided_at", "node_id"}
+
+
+def test_record_decision_for_unknown_file_raises_persistence_error(
+    repository: SqliteCatalogRepository,
+) -> None:
+    # FK violée (fichier jamais observé) : sqlite3.IntegrityError ENVELOPPÉE, jamais nue.
+    with pytest.raises(PersistenceError, match="FOREIGN KEY"):
+        repository.record_decision("0" * 32, _decision())
+
+
+def test_record_decision_rejects_non_canonical_hash(
+    repository: SqliteCatalogRepository, connection: sqlite3.Connection
+) -> None:
+    # Validation Python AVANT toute transaction : un hash en majuscules est rejeté
+    # avec un message clair, aucune ligne n'est écrite.
+    with pytest.raises(PersistenceError, match="hash eD2k non canonique"):
+        repository.record_decision(_HASH.upper(), _decision())
+    assert connection.execute("SELECT count(*) FROM match_decisions").fetchone()[0] == 0
+
+
+def test_repository_satisfies_the_port_structurally(
+    repository: SqliteCatalogRepository,
+) -> None:
+    port: CatalogRepository = repository  # mypy prouve la satisfaction structurelle
+    port.record_observation(_observation())
