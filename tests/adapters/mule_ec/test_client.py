@@ -191,6 +191,37 @@ async def test_connect_twice_is_idempotent_and_keeps_the_first_connection_usable
 
 
 @pytest.mark.asyncio
+async def test_connect_rehandshakes_after_the_transport_is_invalidated() -> None:
+    # Reconnexion-après-coupure (spec orchestration §3) : l'idempotence de connect() est
+    # indexée sur le transport (None → re-handshake ; non-None → no-op). Quand une panne
+    # invalide le transport (_transport=None, comme dans les tests _invalidates_the_transport),
+    # le travailleur RAPPELLE connect() — qui DOIT refaire le handshake, sinon la reconnexion
+    # est silencieusement cassée. On le prouve par byte-accounting : un 2e handshake est scripté
+    # ET CONSOMMÉ (deux paires auth dans server.received), et l'op post-reconnexion réussit.
+    bad_flags_frame = (0xFF000000).to_bytes(4, "big") + (3).to_bytes(4, "big") + b"\x01\x00\x00"
+    stop_ok = encode_packet(EcPacket(codes.EC_OP_MISC_DATA))
+    # Connexion 1 : auth(1) puis une trame illisible (invalide le transport sur stop_search).
+    # Connexion 2 : auth(2) — DOIT être consommée par le re-handshake — puis stop_ok.
+    replies = _auth_replies(1) + [bad_flags_frame] + _auth_replies(2) + [stop_ok]
+    async with FakeEcServer(replies) as server:
+        client = AmuleEcClient("127.0.0.1", server.port, _PASSWORD, timeout=2.0)
+        await client.connect()
+        with pytest.raises(EcProtocolError):
+            await client.stop_search()  # trame illisible → transport JETÉ
+        assert client._transport is None  # invalidé (mirroir des tests sibling)
+        # connect() voit _transport=None → REFAIT le handshake (ne no-op PAS), sur une 2e
+        # connexion TCP : le 2e auth scripté est consommé.
+        await client.connect()
+        assert client._transport is not None  # reconnecté
+        await client.stop_search()  # l'op post-reconnexion réussit (stop_ok)
+        await client.close()
+    # Byte-accounting : 2 AUTH_REQ + 2 AUTH_PASSWD (deux handshakes) ont bien été reçus, preuve
+    # que le 2e connect() a réellement rejoué l'auth (et n'a pas no-opé sur un transport None).
+    auth_reqs = [packet for packet in server.received if packet.opcode == codes.EC_OP_AUTH_REQ]
+    assert len(auth_reqs) == 2
+
+
+@pytest.mark.asyncio
 async def test_close_is_a_noop_when_never_connected_and_idempotent() -> None:
     client = AmuleEcClient("127.0.0.1", 1, _PASSWORD, timeout=2.0)
     await client.close()  # jamais connecté : no-op
