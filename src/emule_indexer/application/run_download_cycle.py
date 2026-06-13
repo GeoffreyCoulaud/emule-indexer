@@ -23,8 +23,10 @@ l'itération (le client se reconnecte au tour suivant ; amuled persiste les down
 JAMAIS d'abandon d'un download stallé. Déterminisme : ``Clock``/``sleep`` injectés.
 """
 
+import asyncio
 import logging
 from collections.abc import Callable, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -36,12 +38,17 @@ from emule_indexer.domain.matching.engine import DownloadCandidate
 from emule_indexer.domain.matching.models import TargetSegment
 from emule_indexer.ports.catalog_repository import ObservedFile
 from emule_indexer.ports.clock import Clock
+from emule_indexer.ports.decision_signal import DecisionSignal
 from emule_indexer.ports.mule_client import MuleUnreachableError
 from emule_indexer.ports.mule_download_client import DownloadEntry, MuleDownloadClient
 from emule_indexer.ports.quarantine import Quarantine
 from emule_indexer.ports.repository_errors import RepositoryError
 
 _logger = logging.getLogger("emule_indexer.application.run_download_cycle")
+
+# Sujet conventionnel du nudge de download (DÉCISION D13). D-download s'abonne à CE sujet ;
+# le câblage du signal("download") côté producteur (pipeline) atterrit en D-verify.
+DOWNLOAD_NUDGE_SUBJECT = "download"
 
 StagingResolver = Callable[[DownloadEntry], Path]
 
@@ -111,6 +118,15 @@ class DownloadDeps:
     disk_cap_bytes: int
     staging_path_for: StagingResolver
     clock: Clock
+
+
+@dataclass
+class DownloadLoopDeps(DownloadDeps):
+    """``DownloadDeps`` + ce qu'il faut pour RÉPÉTER (nudge, cadence, arrêt) — DÉCISION D12."""
+
+    signal: DecisionSignal
+    poll_interval_seconds: float
+    shutdown: asyncio.Event
 
 
 def _target_status(targets: Sequence[TargetSegment], target_id: str) -> str:
@@ -236,3 +252,35 @@ async def run_download_cycle(deps: DownloadDeps) -> None:
         _logger.warning("daemon download injoignable (%s) — itération sautée, retry", error)
     except RepositoryError as error:
         _logger.error("persistance download en échec (%s) — itération sautée, retry", error)
+
+
+async def _sleep_or_nudge(deps: DownloadLoopDeps) -> None:
+    """Attend ``poll_interval`` OU le nudge ``download``, au PREMIER des deux (spec §5).
+
+    ``asyncio.wait(FIRST_COMPLETED)`` puis annulation du perdant : un changement de décision
+    (nudge) réveille la boucle tout de suite ; sinon le poll de repli la réveille à la cadence.
+    L'annulation d'arrêt atterrit ICI (un ``await``), jamais en pleine écriture DB (sync).
+    """
+    sleep_task = asyncio.ensure_future(deps.clock.sleep(deps.poll_interval_seconds))
+    nudge_task = asyncio.ensure_future(deps.signal.wait(DOWNLOAD_NUDGE_SUBJECT))
+    try:
+        await asyncio.wait({sleep_task, nudge_task}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for task in (sleep_task, nudge_task):
+            if not task.done():
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+
+
+async def download_loop(deps: DownloadLoopDeps) -> None:
+    """Répète ``run_download_cycle`` puis attend (poll/nudge) jusqu'à l'arrêt (DÉCISION D12).
+
+    Câblée par ``CrawlerApp`` (D-verify) dans le ``TaskGroup`` ; l'annulation (arrêt) atterrit
+    au prochain ``await`` (poll EC ou attente sleep/nudge), jamais en pleine écriture DB.
+    """
+    while not deps.shutdown.is_set():
+        await run_download_cycle(deps)
+        if deps.shutdown.is_set():
+            break
+        await _sleep_or_nudge(deps)
