@@ -149,17 +149,23 @@ class CrawlerApp:
     async def _supervise(
         self,
         *,
+        shutdown_timeout: asyncio.Timeout,
         workers: Sequence[SearchWorker],
         clients: Sequence[MuleClient],
         node_id: str,
         scheduler_state: SchedulerStateRepository,
         backoff: BackoffRegistry,
     ) -> None:
-        """Lance la boucle, attend l'arrêt (non borné), annule et unwind le ``TaskGroup``.
+        """Lance la boucle, attend l'arrêt (NON borné), ARME la borne, annule et unwind.
 
-        L'attente du signal d'arrêt est libre (le crawler tourne tant qu'on ne l'arrête
-        pas). À l'arrêt, ``loop_task.cancel()`` ; l'annulation atterrit au prochain ``await``
-        réseau d'un travailleur (jamais en pleine écriture DB, repos sync, spec §6).
+        L'attente du signal d'arrêt est LIBRE (``shutdown_timeout`` entre ici DÉSARMÉ —
+        échéance ``None`` — donc le crawler tourne tant qu'on ne l'arrête pas, sur un temps
+        non borné). DÈS l'arrêt demandé, on ARME la borne (``reschedule`` à ``maintenant +
+        shutdown_deadline_seconds``) AVANT d'annuler : ainsi l'unwind du ``TaskGroup`` (l'``await``
+        du ``loop_task`` annulé à la sortie du ``async with``) PUIS la fermeture LIFO du stack
+        (dans ``run``) sont tous deux bornés — l'app ne PEUT pas paraître bloquée à l'arrêt.
+        L'annulation atterrit au prochain ``await`` réseau d'un travailleur (jamais en pleine
+        écriture DB, repos sync, spec §6).
         VÉRIFICATION EMPIRIQUE : annuler UN enfant d'un ``TaskGroup`` (le groupe lui-même
         n'étant pas annulé) NE propage PAS de ``CancelledError`` au sortir du ``async with``
         — l'unwind est PROPRE. On affiche donc la progression APRÈS le bloc, sans ``except*``
@@ -176,7 +182,10 @@ class CrawlerApp:
                     backoff=backoff,
                 )
             )
-            await self._shutdown.wait()
+            await self._shutdown.wait()  # NON borné (la borne est désarmée tant qu'on tourne)
+            shutdown_timeout.reschedule(
+                asyncio.get_running_loop().time() + self._crawler_config.shutdown_deadline_seconds
+            )
             loop_task.cancel()
         _human("Travailleurs arrêtés.")
 
@@ -184,10 +193,15 @@ class CrawlerApp:
         """Point d'entrée async : ouvre les ressources, installe les signaux, boucle (§6).
 
         Ownership (spec §6) : l'``AsyncExitStack`` possède les ressources longue durée (pool
-        de clients + 2 connexions). La PHASE D'ARRÊT — unwind du ``TaskGroup`` PUIS fermeture
-        LIFO du stack — est BORNÉE par un unique ``asyncio.timeout`` : l'app ne PEUT pas
-        paraître bloquée. Un dépassement lève ``TimeoutError`` (sortie forcée) ; le ``finally``
-        tente alors une fermeture best-effort (suppress) pour ne pas re-bloquer indéfiniment.
+        de clients + 2 connexions). La borne d'arrêt est un ``asyncio.timeout`` ENTRÉ DÉSARMÉ
+        (échéance ``None``) : le run en régime permanent (attente du signal, cycles) est NON
+        borné — sinon le crawler mourrait après ``shutdown_deadline_seconds`` de marche normale.
+        SEULE la PHASE D'ARRÊT est bornée : ``_supervise`` ARME la borne (``reschedule``) dès
+        l'arrêt demandé, donc l'unwind du ``TaskGroup`` PUIS la fermeture LIFO du stack ci-dessous
+        tombent sous l'échéance — l'app ne PEUT pas paraître bloquée à l'arrêt. Un dépassement
+        lève ``TimeoutError`` (sortie forcée) ; le ``finally`` tente alors une fermeture
+        best-effort (suppress) pour ne pas re-bloquer indéfiniment. La borne ne s'arme JAMAIS
+        sans arrêt demandé → un ``TimeoutError`` ne peut frapper qu'une fermeture qui traîne.
         """
         loop = asyncio.get_running_loop()
         loop.add_signal_handler(signal.SIGINT, self._on_signal)
@@ -245,8 +259,13 @@ class CrawlerApp:
                 workers.append(SearchWorker(endpoint.name, client, deps))
 
             _logger.info("crawler démarré : %d instance(s), node_id=%s", len(clients), node_id)
-            async with asyncio.timeout(self._crawler_config.shutdown_deadline_seconds):
+            # Borne ENTRÉE DÉSARMÉE (None) : le régime permanent est non borné ; ``_supervise``
+            # l'arme (reschedule) dès l'arrêt demandé → seule la phase d'arrêt + l'aclose ci-dessous
+            # sont bornés. (Vérifié empiriquement : timeout(None) ne tire pas ; reschedule de
+            # l'intérieur arme ; une op lente après arme lève TimeoutError, une rapide non.)
+            async with asyncio.timeout(None) as shutdown_timeout:
                 await self._supervise(
+                    shutdown_timeout=shutdown_timeout,
                     workers=workers,
                     clients=clients,
                     node_id=node_id,

@@ -333,6 +333,44 @@ async def test_signal_cancels_an_in_flight_cycle(
     await asyncio.wait_for(run_task, timeout=5.0)
 
 
+class _RealPacedClient(FakeMuleClient):
+    """Client qui cadence chaque cycle par un PETIT sleep RÉEL (pas le FakeClock).
+
+    Sert à prouver l'invariant temporel : ``network_status`` cède du temps RÉEL au lieu de
+    busy-spinner, donc la boucle de cycles s'écoule à un rythme réel maîtrisé. Le run normal
+    (sans signal) doit DÉPASSER ``shutdown_deadline_seconds`` de temps réel sans lever
+    ``TimeoutError`` — la borne d'arrêt ne doit PAS armer tant que l'arrêt n'est pas demandé."""
+
+    async def network_status(self) -> NetworkStatus:
+        await asyncio.sleep(0.01)  # temps RÉEL : la boucle n'occupe pas l'event loop à 100 %
+        return await super().network_status()
+
+
+@pytest.mark.asyncio
+async def test_normal_run_outlives_shutdown_deadline_without_a_signal(
+    tmp_path: Path, matcher_config: MatcherConfig
+) -> None:
+    # Régression (spec §6, DÉCISION 6) : la borne d'arrêt ne couvre QUE la phase d'arrêt. Un
+    # run normal SANS signal doit tourner indéfiniment — donc survivre BIEN au-delà de
+    # ``shutdown_deadline_seconds`` de temps RÉEL. Avant correctif, ``asyncio.timeout`` enrobait
+    # tout ``_supervise`` (l'attente NON bornée du signal incluse) sur l'horloge RÉELLE → le run
+    # levait ``TimeoutError`` ~deadline après le démarrage, sans aucun arrêt demandé. Ici la
+    # deadline est minuscule (0.2 s) et on laisse passer 0.4 s de temps réel : le run doit
+    # ENCORE tourner, sans avoir levé. Puis on demande l'arrêt → il se termine PROPREMENT.
+    app = _make_app(
+        tmp_path,
+        matcher_config,
+        factory=lambda e: _RealPacedClient(),
+        shutdown_deadline=0.2,
+    )
+    run_task = asyncio.create_task(app.run())
+    await asyncio.sleep(0.4)  # temps RÉEL > deadline : si la borne enrobait le run, il aurait levé
+    assert not run_task.done(), "le run normal (sans signal) ne doit PAS se terminer ni lever"
+    app._on_signal()  # arrêt demandé → la borne s'arme, l'arrêt propre est borné
+    await asyncio.wait_for(run_task, timeout=5.0)  # se termine sans TimeoutError
+    assert run_task.exception() is None
+
+
 def test_default_client_factory_builds_an_amule_client() -> None:
     from emule_indexer.adapters.mule_ec.client import AmuleEcClient
 
@@ -340,17 +378,30 @@ def test_default_client_factory_builds_an_amule_client() -> None:
     assert isinstance(default_client_factory(endpoint), AmuleEcClient)
 
 
+# Fermeture qui traîne BIEN AU-DELÀ de la borne armée (0.05 s), mais BIEN EN DEÇÀ du garde
+# externe (5 s) : ainsi seule la borne INTERNE (armée par ``reschedule``) peut couper la
+# fermeture. Si ``reschedule`` régressait, l'``aclose`` bloquerait ~1 s puis SORTIRAIT
+# proprement (pas de TimeoutError) — le test échouerait alors fail-closed, au lieu de
+# « passer » lentement via le garde externe.
+_SLOW_CLOSE_SECONDS = 1.0
+
+
 class _SlowCloseClient(_ShutdownOnStatusClient):
-    """Client dont ``close`` traîne au-delà du délai d'arrêt → la borne le coupe."""
+    """Client dont ``close`` traîne au-delà de la borne armée → la borne INTERNE le coupe."""
 
     async def close(self) -> None:
-        await asyncio.sleep(10.0)  # > shutdown_deadline (réel) → TimeoutError
+        await asyncio.sleep(_SLOW_CLOSE_SECONDS)  # > borne armée (0.05 s), < garde externe (5 s)
 
 
 @pytest.mark.asyncio
 async def test_shutdown_deadline_forces_exit(tmp_path: Path, matcher_config: MatcherConfig) -> None:
-    # Fermeture qui traîne + délai d'arrêt minuscule → la borne lève TimeoutError (spec §6 :
-    # l'app ne peut PAS paraître bloquée).
+    # Fermeture qui traîne + délai d'arrêt minuscule → la borne INTERNE (armée par
+    # ``reschedule`` à l'arrêt) lève TimeoutError (spec §6 : l'app ne peut PAS paraître bloquée).
+    # ROBUSTESSE : on mesure le temps réel écoulé et on exige que la levée vienne VITE — bien
+    # sous le garde externe ET sous la durée du close lent — pour prouver que c'est la borne
+    # ARMÉE (~0.05 s) qui a tiré, pas le ``wait_for`` externe (5 s) ni la fin du close (1 s).
+    # Un régression de ``reschedule`` (borne jamais armée) ferait sortir l'``aclose`` proprement
+    # après ~1 s SANS TimeoutError → ``pytest.raises`` échouerait (fail-closed).
     app_holder: dict[str, CrawlerApp] = {}
 
     def factory(endpoint: AmuleEndpoint) -> _SlowCloseClient:
@@ -358,8 +409,14 @@ async def test_shutdown_deadline_forces_exit(tmp_path: Path, matcher_config: Mat
 
     app = _make_app(tmp_path, matcher_config, factory=factory, shutdown_deadline=0.05)
     app_holder["app"] = app
+    loop = asyncio.get_running_loop()
+    started = loop.time()
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(app.run(), timeout=5.0)
+    elapsed = loop.time() - started
+    # < 0.5 s : largement sous le close lent (1 s) et le garde externe (5 s) → c'est bien la
+    # borne armée (~0.05 s) qui a coupé la fermeture, pas un autre délai.
+    assert elapsed < 0.5, f"la borne armée doit couper vite, écoulé={elapsed:.3f}s"
 
 
 @pytest.mark.asyncio
