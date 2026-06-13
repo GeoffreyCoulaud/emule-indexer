@@ -39,7 +39,7 @@ from emule_indexer.domain.matching.models import TargetSegment
 from emule_indexer.ports.catalog_repository import ObservedFile
 from emule_indexer.ports.clock import Clock
 from emule_indexer.ports.decision_signal import DecisionSignal
-from emule_indexer.ports.mule_client import MuleUnreachableError
+from emule_indexer.ports.mule_client import MuleSearchFailedError, MuleUnreachableError
 from emule_indexer.ports.mule_download_client import DownloadEntry, MuleDownloadClient
 from emule_indexer.ports.quarantine import Quarantine
 from emule_indexer.ports.repository_errors import RepositoryError
@@ -221,6 +221,13 @@ async def _add_links(deps: DownloadDeps) -> None:
     Séparé de ``_queue_new_candidates`` pour que l'écriture DB (sync) précède l'I/O réseau
     (async) : un ``MuleUnreachableError`` à ``add_link`` laisse le download ``queued`` en base
     (le monitor du tour suivant rattrape). On ré-émet le lien pour tout ``queued`` connu.
+
+    Deux échecs d'``add_link`` à distinguer (spec §9) :
+      - ``MuleSearchFailedError`` (le daemon a répondu ``EC_OP_FAILED`` — lien explicitement
+        REJETÉ) : on marque CE hash ``failed`` (log + ``set_state``) et on ``continue`` au
+        suivant. Réessayer ne ferait que ré-émettre le même lien rejeté en boucle.
+      - ``MuleUnreachableError`` (flux EC mort) : on laisse PROPAGER — la capture de tête de
+        ``run_download_cycle`` saute toute l'itération (un daemon mort fait tout échouer).
     """
     # Re-lecture FRAÎCHE de active_states : _queue_new_candidates a écrit de nouvelles lignes
     # QUEUED ce cycle, absentes du dict passé à _monitor/_handle_completions (figé en début).
@@ -232,7 +239,13 @@ async def _add_links(deps: DownloadDeps) -> None:
         if observation is None:
             continue
         link = build_ed2k_link(observation.filename, observation.size_bytes, ed2k_hash)
-        await deps.client.add_link(link)
+        try:
+            await deps.client.add_link(link)
+        except MuleSearchFailedError as error:
+            deps.downloads.set_state(ed2k_hash, DownloadState.FAILED)
+            _logger.warning(
+                "add_link rejeté par amuled pour hash=%s (%s) — marqué failed", ed2k_hash, error
+            )
 
 
 async def run_download_cycle(deps: DownloadDeps) -> None:

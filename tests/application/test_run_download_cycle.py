@@ -9,7 +9,12 @@ from emule_indexer.domain.download.states import DownloadState
 from emule_indexer.domain.matching.engine import DownloadCandidate
 from emule_indexer.domain.matching.models import TargetSegment
 from emule_indexer.ports.catalog_repository import ObservedFile
-from emule_indexer.ports.mule_client import KadStatus, MuleUnreachableError, NetworkStatus
+from emule_indexer.ports.mule_client import (
+    KadStatus,
+    MuleSearchFailedError,
+    MuleUnreachableError,
+    NetworkStatus,
+)
 from emule_indexer.ports.mule_download_client import DownloadEntry
 from emule_indexer.ports.repository_errors import RepositoryError
 
@@ -516,6 +521,55 @@ async def test_add_link_unreachable_keeps_queued_and_is_tolerated() -> None:
     await run_download_cycle(deps)  # ne lève pas
     assert downloads.states[_A] is DownloadState.QUEUED  # reste queued → rattrapé
     assert client.added_links == []
+
+
+@pytest.mark.asyncio
+async def test_add_link_rejected_marks_failed_and_does_not_crash() -> None:
+    # add_link lève MuleSearchFailedError (le daemon a répondu EC_OP_FAILED — lien rejeté) :
+    # CE hash est marqué FAILED (spec §9 « failed + log »), la boucle continue, ne lève pas.
+    client = FakeDownloadClient(add_failures=[MuleSearchFailedError("rejected")])
+    downloads = FakeDownloadRepo()
+    catalog = FakeCatalogReads(
+        candidates=(_candidate(_A, "S2E062A"),),
+        observations={_A: ObservedFile(filename="x", size_bytes=1)},
+    )
+    deps = _deps(
+        client=client,
+        quarantine=FakeQuarantine(),
+        downloads=downloads,
+        catalog=catalog,
+        local=FakeLocalRepo(),
+    )
+    await run_download_cycle(deps)  # ne lève pas (échec applicatif toléré par hash)
+    assert downloads.states[_A] is DownloadState.FAILED  # lien rejeté → marqué failed
+    assert client.added_links == []
+
+
+@pytest.mark.asyncio
+async def test_add_link_rejected_for_one_hash_does_not_block_the_next() -> None:
+    # add_link rejeté (EC_OP_FAILED) pour _A, accepté pour _B : _A → FAILED, _B → lien émis et
+    # reste QUEUED. La rupture n'avorte pas la boucle (continue au hash suivant).
+    client = FakeDownloadClient(add_failures=[MuleSearchFailedError("rejected")])
+    downloads = FakeDownloadRepo()
+    catalog = FakeCatalogReads(
+        candidates=(_candidate(_A, "S2E062A"), _candidate(_B, "S2E062A")),
+        observations={
+            _A: ObservedFile(filename="a", size_bytes=1),
+            _B: ObservedFile(filename="b", size_bytes=1),
+        },
+    )
+    deps = _deps(
+        client=client,
+        quarantine=FakeQuarantine(),
+        downloads=downloads,
+        catalog=catalog,
+        local=FakeLocalRepo(),
+    )
+    await run_download_cycle(deps)
+    assert downloads.states[_A] is DownloadState.FAILED  # rejeté
+    assert downloads.states[_B] is DownloadState.QUEUED  # accepté (lien émis)
+    assert any(_B in link for link in client.added_links)
+    assert all(_A not in link for link in client.added_links)
 
 
 @pytest.mark.asyncio
