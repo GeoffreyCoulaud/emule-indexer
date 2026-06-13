@@ -206,6 +206,8 @@ async def _add_links(deps: DownloadDeps) -> None:
     (async) : un ``MuleUnreachableError`` à ``add_link`` laisse le download ``queued`` en base
     (le monitor du tour suivant rattrape). On ré-émet le lien pour tout ``queued`` connu.
     """
+    # Re-lecture FRAÎCHE de active_states : _queue_new_candidates a écrit de nouvelles lignes
+    # QUEUED ce cycle, absentes du dict passé à _monitor/_handle_completions (figé en début).
     states = deps.downloads.active_states()
     for ed2k_hash, state in states.items():
         if state is not DownloadState.QUEUED:

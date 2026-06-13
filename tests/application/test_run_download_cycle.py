@@ -494,3 +494,52 @@ async def test_queued_download_without_observation_emits_no_link() -> None:
     )
     await run_download_cycle(deps)
     assert client.added_links == []
+
+
+@pytest.mark.asyncio
+async def test_add_link_unreachable_keeps_queued_and_is_tolerated() -> None:
+    # add_link lève MuleUnreachableError → toléré au niveau cycle ; le download reste QUEUED
+    # (record_queued a déjà eu lieu) → rattrapé au tour suivant. Invariant write-before-network.
+    client = FakeDownloadClient(add_failures=[MuleUnreachableError("down")])
+    downloads = FakeDownloadRepo()
+    catalog = FakeCatalogReads(
+        candidates=(_candidate(_A, "S2E062A"),),
+        observations={_A: ObservedFile(filename="x", size_bytes=1)},
+    )
+    deps = _deps(
+        client=client,
+        quarantine=FakeQuarantine(),
+        downloads=downloads,
+        catalog=catalog,
+        local=FakeLocalRepo(),
+    )
+    await run_download_cycle(deps)  # ne lève pas
+    assert downloads.states[_A] is DownloadState.QUEUED  # reste queued → rattrapé
+    assert client.added_links == []
+
+
+@pytest.mark.asyncio
+async def test_completion_and_new_candidate_in_the_same_cycle() -> None:
+    # _A est déjà COMPLETED (promu ce cycle) ; _B est un nouveau candidat (mis en file + lien).
+    client = FakeDownloadClient(queue=[(DownloadEntry(ed2k_hash=_A, size_done=10, size_full=10),)])
+    downloads = FakeDownloadRepo()
+    downloads.states[_A] = DownloadState.COMPLETED
+    downloads.sizes[_A] = 10
+    quarantine = FakeQuarantine()
+    local = FakeLocalRepo()
+    catalog = FakeCatalogReads(
+        candidates=(_candidate(_B, "S2E062A"),),
+        observations={_B: ObservedFile(filename="b.avi", size_bytes=100)},
+    )
+    deps = _deps(
+        client=client,
+        quarantine=quarantine,
+        downloads=downloads,
+        catalog=catalog,
+        local=local,
+    )
+    await run_download_cycle(deps)
+    assert downloads.states[_A] is DownloadState.QUARANTINED  # complété → promu + enfilé
+    assert local.enqueued == [_A]
+    assert downloads.states[_B] is DownloadState.QUEUED  # nouveau → mis en file
+    assert any(_B in link for link in client.added_links)  # + lien émis
