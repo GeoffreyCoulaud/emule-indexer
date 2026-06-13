@@ -1,0 +1,496 @@
+import asyncio
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import pytest
+
+from emule_indexer.application.run_download_cycle import DownloadDeps, run_download_cycle
+from emule_indexer.domain.download.states import DownloadState
+from emule_indexer.domain.matching.engine import DownloadCandidate
+from emule_indexer.domain.matching.models import TargetSegment
+from emule_indexer.ports.catalog_repository import ObservedFile
+from emule_indexer.ports.mule_client import KadStatus, MuleUnreachableError, NetworkStatus
+from emule_indexer.ports.mule_download_client import DownloadEntry
+from emule_indexer.ports.repository_errors import RepositoryError
+
+_A = "a" * 32
+_B = "b" * 32
+
+_TARGETS = (
+    TargetSegment(season=2, number=62, segment="A", title="t", status="lost"),
+    TargetSegment(season=2, number=63, segment="A", title="t2", status="complete"),
+)
+
+
+class FakeDownloadClient:
+    """MuleDownloadClient scripté : file de download SCRIPTÉE, capture des liens ajoutés."""
+
+    def __init__(
+        self,
+        *,
+        queue: list[tuple[DownloadEntry, ...]] | None = None,
+        connect_failures: list[Exception] | None = None,
+        queue_failures: list[Exception] | None = None,
+        add_failures: list[Exception] | None = None,
+    ) -> None:
+        self._queue = list(queue or [()])
+        self._connect_failures = list(connect_failures or [])
+        self._queue_failures = list(queue_failures or [])
+        self._add_failures = list(add_failures or [])
+        self.added_links: list[str] = []
+        self.connect_calls = 0
+
+    async def connect(self) -> None:
+        self.connect_calls += 1
+        if self._connect_failures:
+            raise self._connect_failures.pop(0)
+
+    async def close(self) -> None:
+        return None
+
+    async def add_link(self, ed2k_link: str) -> None:
+        if self._add_failures:
+            raise self._add_failures.pop(0)
+        self.added_links.append(ed2k_link)
+
+    async def download_queue(self) -> tuple[DownloadEntry, ...]:
+        if self._queue_failures:
+            raise self._queue_failures.pop(0)
+        return self._queue.pop(0) if self._queue else ()
+
+    async def network_status(self) -> NetworkStatus:
+        return NetworkStatus(ed2k_id=1, ed2k_high=True, kad_status=KadStatus.CONNECTED)
+
+
+class FakeQuarantine:
+    """Quarantine fausse : enregistre les promotions, échoue sur les hash de ``fail_for``."""
+
+    def __init__(self, *, fail_for: set[str] | None = None) -> None:
+        self.promoted: list[tuple[Path, str]] = []
+        self._fail_for = fail_for or set()
+
+    def promote(self, staging_path: Path, ed2k_hash: str) -> None:
+        if ed2k_hash in self._fail_for:
+            raise OSError("rename impossible")
+        self.promoted.append((staging_path, ed2k_hash))
+
+
+class FakeDownloadRepo:
+    """Repo downloads en mémoire (le contrat de SqliteDownloadRepository, sans SQL)."""
+
+    def __init__(self, *, fail_record: bool = False) -> None:
+        self.states: dict[str, DownloadState] = {}
+        self.sizes: dict[str, int] = {}
+        self._fail_record = fail_record
+
+    def record_queued(self, ed2k_hash: str, target_id: str, size_bytes: int) -> bool:
+        if self._fail_record:
+            raise RepositoryError("écriture downloads échouée")
+        if ed2k_hash in self.states:
+            return False
+        self.states[ed2k_hash] = DownloadState.QUEUED
+        self.sizes[ed2k_hash] = size_bytes
+        return True
+
+    def set_state(self, ed2k_hash: str, state: DownloadState) -> None:
+        self.states[ed2k_hash] = state
+
+    def is_downloaded(self, ed2k_hash: str) -> bool:
+        return ed2k_hash in self.states
+
+    def committed_bytes(self) -> int:
+        return sum(
+            self.sizes.get(h, 0)
+            for h, s in self.states.items()
+            if s in {DownloadState.QUEUED, DownloadState.DOWNLOADING}
+        )
+
+    def active_states(self) -> dict[str, DownloadState]:
+        return dict(self.states)
+
+
+class FakeCatalogReads:
+    """Côté lecture du catalogue : download_decisions + last_observation scriptés."""
+
+    def __init__(
+        self,
+        *,
+        candidates: tuple[DownloadCandidate, ...] = (),
+        observations: dict[str, ObservedFile] | None = None,
+    ) -> None:
+        self._candidates = candidates
+        self._observations = observations or {}
+
+    def download_decisions(self) -> tuple[DownloadCandidate, ...]:
+        return self._candidates
+
+    def last_observation(self, ed2k_hash: str) -> ObservedFile | None:
+        return self._observations.get(ed2k_hash)
+
+
+class FakeLocalRepo:
+    """enqueue_verification (idempotent) capturé."""
+
+    def __init__(self) -> None:
+        self.enqueued: list[str] = []
+
+    def enqueue_verification(self, ed2k_hash: str) -> bool:
+        first = ed2k_hash not in self.enqueued
+        self.enqueued.append(ed2k_hash)
+        return first
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self._now = datetime(2026, 6, 13, tzinfo=UTC)
+        self.sleeps: list[float] = []
+
+    def now(self) -> datetime:
+        return self._now
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self._now += timedelta(seconds=seconds)
+        await asyncio.sleep(0)
+
+
+def _candidate(hash_hex: str, target_id: str) -> DownloadCandidate:
+    return DownloadCandidate(ed2k_hash=hash_hex, target_id=target_id)
+
+
+def _deps(
+    *,
+    client: FakeDownloadClient,
+    quarantine: FakeQuarantine,
+    downloads: FakeDownloadRepo,
+    catalog: FakeCatalogReads,
+    local: FakeLocalRepo,
+    disk_cap: int = 1_000_000,
+) -> DownloadDeps:
+    return DownloadDeps(
+        client=client,
+        quarantine=quarantine,
+        downloads=downloads,
+        catalog=catalog,
+        local=local,
+        targets=_TARGETS,
+        disk_cap_bytes=disk_cap,
+        staging_path_for=lambda entry: Path("/staging") / entry.ed2k_hash,
+        clock=FakeClock(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_new_candidate_is_queued_and_link_added() -> None:
+    client = FakeDownloadClient()
+    downloads = FakeDownloadRepo()
+    catalog = FakeCatalogReads(
+        candidates=(_candidate(_A, "S2E062A"),),
+        observations={_A: ObservedFile(filename="Keroro.avi", size_bytes=100)},
+    )
+    deps = _deps(
+        client=client,
+        quarantine=FakeQuarantine(),
+        downloads=downloads,
+        catalog=catalog,
+        local=FakeLocalRepo(),
+    )
+    await run_download_cycle(deps)
+    assert downloads.states[_A] is DownloadState.QUEUED
+    assert len(client.added_links) == 1
+    assert _A in client.added_links[0]
+
+
+@pytest.mark.asyncio
+async def test_already_downloaded_candidate_is_deduped() -> None:
+    client = FakeDownloadClient()
+    downloads = FakeDownloadRepo()
+    downloads.states[_A] = DownloadState.DOWNLOADING  # déjà connu
+    catalog = FakeCatalogReads(
+        candidates=(_candidate(_A, "S2E062A"),),
+        observations={_A: ObservedFile(filename="x", size_bytes=1)},
+    )
+    deps = _deps(
+        client=client,
+        quarantine=FakeQuarantine(),
+        downloads=downloads,
+        catalog=catalog,
+        local=FakeLocalRepo(),
+    )
+    await run_download_cycle(deps)
+    assert client.added_links == []  # dédup : pas de nouveau lien
+
+
+@pytest.mark.asyncio
+async def test_complete_target_candidate_is_skipped() -> None:
+    client = FakeDownloadClient()
+    downloads = FakeDownloadRepo()
+    catalog = FakeCatalogReads(
+        candidates=(_candidate(_B, "S2E063A"),),  # S2E063A status=complete
+        observations={_B: ObservedFile(filename="x", size_bytes=1)},
+    )
+    deps = _deps(
+        client=client,
+        quarantine=FakeQuarantine(),
+        downloads=downloads,
+        catalog=catalog,
+        local=FakeLocalRepo(),
+    )
+    await run_download_cycle(deps)
+    assert client.added_links == []
+    assert _B not in downloads.states
+
+
+@pytest.mark.asyncio
+async def test_disk_cap_defers_candidate() -> None:
+    client = FakeDownloadClient()
+    downloads = FakeDownloadRepo()
+    catalog = FakeCatalogReads(
+        candidates=(_candidate(_A, "S2E062A"),),
+        observations={_A: ObservedFile(filename="x", size_bytes=500)},
+    )
+    deps = _deps(
+        client=client,
+        quarantine=FakeQuarantine(),
+        downloads=downloads,
+        catalog=catalog,
+        local=FakeLocalRepo(),
+        disk_cap=100,  # 500 > 100 → diffère
+    )
+    await run_download_cycle(deps)
+    assert client.added_links == []
+    assert _A not in downloads.states
+
+
+@pytest.mark.asyncio
+async def test_candidate_without_observation_is_skipped() -> None:
+    # un candidat dont aucune observation n'a survécu (cas limite) ne peut pas bâtir de lien :
+    # on le saute (log), jamais de crash.
+    client = FakeDownloadClient()
+    downloads = FakeDownloadRepo()
+    catalog = FakeCatalogReads(candidates=(_candidate(_A, "S2E062A"),), observations={})
+    deps = _deps(
+        client=client,
+        quarantine=FakeQuarantine(),
+        downloads=downloads,
+        catalog=catalog,
+        local=FakeLocalRepo(),
+    )
+    await run_download_cycle(deps)
+    assert client.added_links == []
+
+
+@pytest.mark.asyncio
+async def test_monitor_marks_downloading_then_completed() -> None:
+    client = FakeDownloadClient(queue=[(DownloadEntry(ed2k_hash=_A, size_done=10, size_full=10),)])
+    downloads = FakeDownloadRepo()
+    downloads.states[_A] = DownloadState.QUEUED
+    downloads.sizes[_A] = 10
+    quarantine = FakeQuarantine()
+    local = FakeLocalRepo()
+    deps = _deps(
+        client=client,
+        quarantine=quarantine,
+        downloads=downloads,
+        catalog=FakeCatalogReads(),
+        local=local,
+    )
+    await run_download_cycle(deps)
+    # complet → promu + enfilé + quarantined
+    assert downloads.states[_A] is DownloadState.QUARANTINED
+    assert quarantine.promoted == [(Path("/staging") / _A, _A)]
+    assert local.enqueued == [_A]
+
+
+@pytest.mark.asyncio
+async def test_monitor_marks_in_progress_when_not_complete() -> None:
+    client = FakeDownloadClient(queue=[(DownloadEntry(ed2k_hash=_A, size_done=3, size_full=10),)])
+    downloads = FakeDownloadRepo()
+    downloads.states[_A] = DownloadState.QUEUED
+    deps = _deps(
+        client=client,
+        quarantine=FakeQuarantine(),
+        downloads=downloads,
+        catalog=FakeCatalogReads(),
+        local=FakeLocalRepo(),
+    )
+    await run_download_cycle(deps)
+    assert downloads.states[_A] is DownloadState.DOWNLOADING
+
+
+@pytest.mark.asyncio
+async def test_monitor_ignores_unknown_queue_entries() -> None:
+    # une entrée dans la file amuled mais inconnue de downloads (lancée hors crawler) est ignorée.
+    client = FakeDownloadClient(queue=[(DownloadEntry(ed2k_hash=_B, size_done=10, size_full=10),)])
+    downloads = FakeDownloadRepo()
+    deps = _deps(
+        client=client,
+        quarantine=FakeQuarantine(),
+        downloads=downloads,
+        catalog=FakeCatalogReads(),
+        local=FakeLocalRepo(),
+    )
+    await run_download_cycle(deps)
+    assert _B not in downloads.states
+
+
+@pytest.mark.asyncio
+async def test_promote_failure_keeps_completed_and_does_not_enqueue() -> None:
+    client = FakeDownloadClient(queue=[(DownloadEntry(ed2k_hash=_A, size_done=10, size_full=10),)])
+    downloads = FakeDownloadRepo()
+    downloads.states[_A] = DownloadState.QUEUED
+    quarantine = FakeQuarantine(fail_for={_A})
+    local = FakeLocalRepo()
+    deps = _deps(
+        client=client,
+        quarantine=quarantine,
+        downloads=downloads,
+        catalog=FakeCatalogReads(),
+        local=local,
+    )
+    await run_download_cycle(deps)
+    assert downloads.states[_A] is DownloadState.COMPLETED  # reste completed (retry)
+    assert local.enqueued == []  # n'enfile PAS
+
+
+@pytest.mark.asyncio
+async def test_already_quarantined_completion_is_skipped() -> None:
+    client = FakeDownloadClient(queue=[(DownloadEntry(ed2k_hash=_A, size_done=10, size_full=10),)])
+    downloads = FakeDownloadRepo()
+    downloads.states[_A] = DownloadState.QUARANTINED  # déjà promu
+    quarantine = FakeQuarantine()
+    local = FakeLocalRepo()
+    deps = _deps(
+        client=client,
+        quarantine=quarantine,
+        downloads=downloads,
+        catalog=FakeCatalogReads(),
+        local=local,
+    )
+    await run_download_cycle(deps)
+    assert quarantine.promoted == []  # déjà quarantined → sauté
+    assert local.enqueued == []
+
+
+@pytest.mark.asyncio
+async def test_unreachable_client_is_tolerated_and_iteration_skipped() -> None:
+    client = FakeDownloadClient(queue_failures=[MuleUnreachableError("daemon down")])
+    downloads = FakeDownloadRepo()
+    deps = _deps(
+        client=client,
+        quarantine=FakeQuarantine(),
+        downloads=downloads,
+        catalog=FakeCatalogReads(candidates=(_candidate(_A, "S2E062A"),)),
+        local=FakeLocalRepo(),
+    )
+    await run_download_cycle(deps)  # ne lève pas
+    assert client.added_links == []  # itération sautée (pas de candidats traités)
+
+
+@pytest.mark.asyncio
+async def test_repository_error_is_absorbed() -> None:
+    client = FakeDownloadClient()
+    downloads = FakeDownloadRepo(fail_record=True)  # record_queued lève RepositoryError
+    catalog = FakeCatalogReads(
+        candidates=(_candidate(_A, "S2E062A"),),
+        observations={_A: ObservedFile(filename="x", size_bytes=1)},
+    )
+    deps = _deps(
+        client=client,
+        quarantine=FakeQuarantine(),
+        downloads=downloads,
+        catalog=catalog,
+        local=FakeLocalRepo(),
+    )
+    await run_download_cycle(deps)  # ne lève pas (RepositoryError absorbée)
+
+
+@pytest.mark.asyncio
+async def test_intra_cycle_disk_cap_accounts_for_links_added_this_cycle() -> None:
+    # deux candidats de 600 o, plafond 1000 : le 1er passe (600 ≤ 1000), le 2e diffère
+    # (600 + 600 > 1000) — le committed est recalculé EN MÉMOIRE au fil du cycle.
+    client = FakeDownloadClient()
+    downloads = FakeDownloadRepo()
+    catalog = FakeCatalogReads(
+        candidates=(_candidate(_A, "S2E062A"), _candidate(_B, "S2E062A")),
+        observations={
+            _A: ObservedFile(filename="a", size_bytes=600),
+            _B: ObservedFile(filename="b", size_bytes=600),
+        },
+    )
+    deps = _deps(
+        client=client,
+        quarantine=FakeQuarantine(),
+        downloads=downloads,
+        catalog=catalog,
+        local=FakeLocalRepo(),
+        disk_cap=1000,
+    )
+    await run_download_cycle(deps)
+    assert len(client.added_links) == 1  # un seul a tenu dans le plafond
+
+
+@pytest.mark.asyncio
+async def test_candidate_for_unknown_target_is_treated_as_complete() -> None:
+    # _target_status : un candidat dont le target_id est ABSENT de _TARGETS → "complete"
+    # (conservateur) → politique SKIP_COMPLETE → aucun lien, hash non mis en file.
+    client = FakeDownloadClient()
+    downloads = FakeDownloadRepo()
+    catalog = FakeCatalogReads(
+        candidates=(_candidate(_A, "S9E999Z"),),  # cible fantôme, absente de _TARGETS
+        observations={_A: ObservedFile(filename="x", size_bytes=1)},
+    )
+    deps = _deps(
+        client=client,
+        quarantine=FakeQuarantine(),
+        downloads=downloads,
+        catalog=catalog,
+        local=FakeLocalRepo(),
+    )
+    await run_download_cycle(deps)
+    assert client.added_links == []
+    assert _A not in downloads.states
+
+
+@pytest.mark.asyncio
+async def test_monitor_no_op_when_state_already_matches() -> None:
+    # _monitor : entrée en cours (done=3/full=10) et repo déjà DOWNLOADING → target == current
+    # → AUCUN set_state (branche FALSE de `if target != current`).
+    client = FakeDownloadClient(queue=[(DownloadEntry(ed2k_hash=_A, size_done=3, size_full=10),)])
+    downloads = FakeDownloadRepo()
+    downloads.states[_A] = DownloadState.DOWNLOADING
+
+    class _NoSetStateRepo(FakeDownloadRepo):
+        def set_state(self, ed2k_hash: str, state: DownloadState) -> None:
+            raise AssertionError("set_state ne doit pas être appelé (état déjà à jour)")
+
+    repo = _NoSetStateRepo()
+    repo.states[_A] = DownloadState.DOWNLOADING
+    deps = _deps(
+        client=client,
+        quarantine=FakeQuarantine(),
+        downloads=repo,
+        catalog=FakeCatalogReads(),
+        local=FakeLocalRepo(),
+    )
+    await run_download_cycle(deps)
+    assert repo.states[_A] is DownloadState.DOWNLOADING
+
+
+@pytest.mark.asyncio
+async def test_queued_download_without_observation_emits_no_link() -> None:
+    # _add_links : un download QUEUED en base mais sans observation au catalogue → pas de lien
+    # (branche `if observation is None: continue`).
+    client = FakeDownloadClient()
+    downloads = FakeDownloadRepo()
+    downloads.states[_A] = DownloadState.QUEUED
+    downloads.sizes[_A] = 100
+    deps = _deps(
+        client=client,
+        quarantine=FakeQuarantine(),
+        downloads=downloads,
+        catalog=FakeCatalogReads(observations={}),  # aucune observation
+        local=FakeLocalRepo(),
+    )
+    await run_download_cycle(deps)
+    assert client.added_links == []
