@@ -175,9 +175,10 @@ class AmuleEcClient:
         """Snapshot de la file de download (réf. EC, DÉCISION D1/D2). NE LIT JAMAIS les octets.
 
         Émet ``EC_OP_GET_DLOAD_QUEUE`` au détail CMD ; la réponse ``EC_OP_DLOAD_QUEUE``
-        contient N enfants ``EC_TAG_PARTFILE`` dont la valeur PROPRE est le hash (HASH16) et
-        les enfants portent name/size_full/size_done/status. Une entrée sans hash exploitable
-        est ÉCARTÉE (tolérance aux inconnus, comme ``map_search_results`` — jamais fatale).
+        contient N enfants ``EC_TAG_PARTFILE`` dont les sous-tags portent le hash (enfant
+        dédié ``EC_TAG_PARTFILE_HASH``, HASH16) et name/size_full/size_done/status. Une entrée
+        sans hash exploitable est ÉCARTÉE (tolérance aux inconnus, comme ``map_search_results``
+        — jamais fatale).
         """
         request = EcPacket(
             codes.EC_OP_GET_DLOAD_QUEUE,
@@ -308,14 +309,21 @@ def _optional_partfile_int(entry: EcTag, name: int) -> int:
 def _map_partfile(entry: EcTag) -> DownloadEntry | None:
     """Une entrée ``EC_TAG_PARTFILE`` → ``DownloadEntry``, ou ``None`` si le hash est inexploitable.
 
-    La valeur PROPRE de l'entrée est le hash (HASH16, 16 octets) ; les tailles sont des
-    enfants. Une valeur propre qui n'est pas un HASH16 de 16 octets écarte l'entrée (le hash
-    est le SEUL identifiant stable — sans lui, l'entrée est inutilisable, jamais persistée).
+    Le hash est l'enfant dédié ``EC_TAG_PARTFILE_HASH`` (0x031E, HASH16, 16 octets) — vérifié
+    contre un amuled RÉEL : la valeur PROPRE de ``EC_TAG_PARTFILE`` est un UINT8 (index/statut
+    interne, IGNORÉ ici), PAS le hash. Les tailles sont aussi des enfants. Un enfant hash
+    absent / d'un type autre que HASH16 / ≠ 16 octets écarte l'entrée (le hash est le SEUL
+    identifiant stable — sans lui, l'entrée est inutilisable, jamais persistée).
     """
-    if entry.tag_type != codes.EC_TAGTYPE_HASH16 or len(entry.value) != 16:
+    hash_tag = entry.find(codes.EC_TAG_PARTFILE_HASH)
+    if (
+        hash_tag is None
+        or hash_tag.tag_type != codes.EC_TAGTYPE_HASH16
+        or len(hash_tag.value) != 16
+    ):
         return None
     return DownloadEntry(
-        ed2k_hash=entry.value.hex(),
+        ed2k_hash=hash_tag.value.hex(),
         size_done=_optional_partfile_int(entry, codes.EC_TAG_PARTFILE_SIZE_DONE),
         size_full=_optional_partfile_int(entry, codes.EC_TAG_PARTFILE_SIZE_FULL),
     )

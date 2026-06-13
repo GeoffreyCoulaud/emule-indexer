@@ -21,8 +21,12 @@ pytestmark = pytest.mark.download_integration
 
 _EC_PASSWORD = "indexer-ec-test"
 _IMAGE = "ngosang/amule:3.0.0-1"
-# Un hash arbitraire mais canonique : amuled accepte le lien (pas de source ≠ lien invalide).
-_HASH = "31d6cfe0d16ae931b73c59d7e0c089c0"
+# Un hash canonique NON DÉGÉNÉRÉ : surtout PAS la MD4 du fichier vide (31d6cfe0…), qu'amuled
+# traite comme instantanément complet à 0 octet et ne liste JAMAIS comme partfile actif — ce
+# qui avait masqué le bug du décodage de hash. Avec une vraie taille, le lien crée un partfile
+# listé (size_done=0 < size_full), dont le hash apparaît dans l'enfant EC_TAG_PARTFILE_HASH.
+_HASH = "aabbccddeeff00112233445566778899"
+_SIZE = 734003200  # ~700 Mio : une taille réelle, donc un partfile actif (jamais "complet")
 
 
 @pytest.fixture(scope="module")
@@ -47,7 +51,7 @@ async def test_add_link_then_appears_in_download_queue(amuled: tuple[str, int]) 
     client = AmuleEcClient(host, port, _EC_PASSWORD, timeout=30.0)
     await client.connect()
     try:
-        link = build_ed2k_link("probe-download.bin", 1048576, _HASH)
+        link = build_ed2k_link("probe-download.bin", _SIZE, _HASH)
         try:
             await client.add_link(link)
         except EcFailureError as exc:
@@ -58,10 +62,11 @@ async def test_add_link_then_appears_in_download_queue(amuled: tuple[str, int]) 
         queue = await client.download_queue()
         assert isinstance(queue, tuple)
         assert all(isinstance(entry, DownloadEntry) for entry in queue)
-        # Le hash ajouté devrait apparaître dans la file (statut lisible). On TOLÈRE une file
-        # vide si amuled a déduppé/rejeté silencieusement : la MÉCANIQUE (add_link accepté +
-        # download_queue décodée) est ce qui fait foi (option A).
+        # add_link ACCEPTÉ : un lien à vraie taille (sans source) crée un partfile listé
+        # (size_done=0 < size_full), dont le hash est porté par l'enfant EC_TAG_PARTFILE_HASH.
+        # C'est le RÉGRESSION GUARD du bug de décodage : si _map_partfile lisait encore la
+        # valeur propre (UINT8) au lieu de l'enfant 0x031E, la file serait vide ici → échec.
         hashes = {entry.ed2k_hash for entry in queue}
-        assert _HASH in hashes or queue == ()
+        assert _HASH in hashes
     finally:
         await client.close()

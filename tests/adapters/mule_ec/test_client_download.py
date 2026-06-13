@@ -52,11 +52,15 @@ def _connected_client(transport: _ScriptedTransport) -> AmuleEcClient:
 
 
 def _partfile_entry(hash_hex: str, *, done: int, full: int) -> EcTag:
+    # Layout RÉEL (vérifié contre un amuled réel) : la valeur PROPRE du tag EC_TAG_PARTFILE est
+    # un UINT8 (index/statut interne, ex. 0x0d), PAS le hash ; le hash est l'enfant dédié
+    # EC_TAG_PARTFILE_HASH (0x031E, HASH16). size_full/size_done restent des enfants.
     return EcTag(
         codes.EC_TAG_PARTFILE,
-        codes.EC_TAGTYPE_HASH16,
-        bytes.fromhex(hash_hex),
+        codes.EC_TAGTYPE_UINT8,
+        bytes([1]),
         (
+            EcTag(codes.EC_TAG_PARTFILE_HASH, codes.EC_TAGTYPE_HASH16, bytes.fromhex(hash_hex), ()),
             string_tag(codes.EC_TAG_PARTFILE_NAME, "Keroro.avi"),
             uint_tag(codes.EC_TAG_PARTFILE_SIZE_FULL, full),
             uint_tag(codes.EC_TAG_PARTFILE_SIZE_DONE, done),
@@ -122,9 +126,38 @@ async def test_download_queue_requests_at_cmd_detail() -> None:
 
 @pytest.mark.asyncio
 async def test_download_queue_skips_entries_without_a_usable_hash() -> None:
-    # une entrée dont la valeur propre n'est PAS un HASH16 de 16 octets est ÉCARTÉE
-    # (tolérance aux inconnus, comme map_search_results) — jamais fatale au lot.
-    pourrie = EcTag(codes.EC_TAG_PARTFILE, codes.EC_TAGTYPE_UINT8, b"\x01", ())
+    # une entrée SANS enfant EC_TAG_PARTFILE_HASH exploitable est ÉCARTÉE (tolérance aux
+    # inconnus, comme map_search_results) — jamais fatale au lot. Ici : valeur propre UINT8
+    # (l'index/statut interne) MAIS aucun enfant 0x031E → pas de hash → écartée.
+    pourrie = EcTag(
+        codes.EC_TAG_PARTFILE,
+        codes.EC_TAGTYPE_UINT8,
+        b"\x01",
+        (string_tag(codes.EC_TAG_PARTFILE_NAME, "orpheline.avi"),),
+    )
+    reply = EcPacket(codes.EC_OP_DLOAD_QUEUE, (pourrie, _partfile_entry(_HASH, done=1, full=2)))
+    client = _connected_client(_ScriptedTransport([reply]))
+    queue = await client.download_queue()
+    assert queue == (DownloadEntry(ed2k_hash=_HASH, size_done=1, size_full=2),)
+
+
+@pytest.mark.asyncio
+async def test_download_queue_skips_entries_with_a_wrong_length_hash_child() -> None:
+    # un enfant 0x031E PRÉSENT mais malformé (HASH16 déclaré, longueur ≠ 16) → écartée :
+    # le hash est le SEUL identifiant stable, sans lui l'entrée est inutilisable.
+    bad_hash = EcTag(codes.EC_TAG_PARTFILE_HASH, codes.EC_TAGTYPE_HASH16, b"\x00" * 8, ())
+    pourrie = EcTag(codes.EC_TAG_PARTFILE, codes.EC_TAGTYPE_UINT8, b"\x01", (bad_hash,))
+    reply = EcPacket(codes.EC_OP_DLOAD_QUEUE, (pourrie, _partfile_entry(_HASH, done=1, full=2)))
+    client = _connected_client(_ScriptedTransport([reply]))
+    queue = await client.download_queue()
+    assert queue == (DownloadEntry(ed2k_hash=_HASH, size_done=1, size_full=2),)
+
+
+@pytest.mark.asyncio
+async def test_download_queue_skips_entries_with_a_wrong_type_hash_child() -> None:
+    # un enfant 0x031E PRÉSENT mais d'un type qui n'est PAS HASH16 (ex. STRING) → écartée.
+    wrong_type = string_tag(codes.EC_TAG_PARTFILE_HASH, "pas-un-hash")
+    pourrie = EcTag(codes.EC_TAG_PARTFILE, codes.EC_TAGTYPE_UINT8, b"\x01", (wrong_type,))
     reply = EcPacket(codes.EC_OP_DLOAD_QUEUE, (pourrie, _partfile_entry(_HASH, done=1, full=2)))
     client = _connected_client(_ScriptedTransport([reply]))
     queue = await client.download_queue()
@@ -144,9 +177,12 @@ async def test_download_queue_skips_non_partfile_toplevel_tags() -> None:
 
 @pytest.mark.asyncio
 async def test_download_queue_treats_missing_size_as_zero() -> None:
-    # une entrée valide (hash) mais sans tags de taille → done=0, full=0 (absence = 0,
-    # réf. EC §3) → is_complete False, ne sera jamais promue par erreur.
-    entry = EcTag(codes.EC_TAG_PARTFILE, codes.EC_TAGTYPE_HASH16, bytes.fromhex(_HASH), ())
+    # une entrée valide (enfant hash 0x031E présent) mais SANS tags de taille → done=0,
+    # full=0 (absence = 0, réf. EC §3) → is_complete False, ne sera jamais promue par erreur.
+    hash_child = EcTag(
+        codes.EC_TAG_PARTFILE_HASH, codes.EC_TAGTYPE_HASH16, bytes.fromhex(_HASH), ()
+    )
+    entry = EcTag(codes.EC_TAG_PARTFILE, codes.EC_TAGTYPE_UINT8, bytes([1]), (hash_child,))
     client = _connected_client(_ScriptedTransport([EcPacket(codes.EC_OP_DLOAD_QUEUE, (entry,))]))
     queue = await client.download_queue()
     assert queue == (DownloadEntry(ed2k_hash=_HASH, size_done=0, size_full=0),)
@@ -155,9 +191,9 @@ async def test_download_queue_treats_missing_size_as_zero() -> None:
 @pytest.mark.asyncio
 async def test_download_queue_survives_a_real_codec_round_trip() -> None:
     # Round-trip RÉEL (FakeEcServer + vrais streams asyncio + vrai codec, idiome du reste du
-    # suite EC) : prouve qu'une entrée PARTFILE (valeur PROPRE HASH16 + enfants name/size_*)
-    # survit à encode_packet → socket → decode_payload → map. Les autres tests court-circuitent
-    # le codec en injectant des EcPacket/EcTag directement dans _transport.
+    # suite EC) : prouve qu'une entrée PARTFILE au layout RÉEL (valeur propre UINT8 + enfant
+    # HASH16 0x031E + enfants name/size_*) survit à encode_packet → socket → decode_payload →
+    # map. Les autres tests court-circuitent le codec en injectant EcPacket/EcTag dans _transport.
     entry = _partfile_entry(_HASH, done=4, full=9)
     reply = encode_packet(EcPacket(codes.EC_OP_DLOAD_QUEUE, (entry,)))
     async with FakeEcServer(_auth_replies(1) + [reply]) as server:
@@ -172,10 +208,14 @@ async def test_download_queue_survives_a_real_codec_round_trip() -> None:
 
 @pytest.mark.asyncio
 async def test_download_queue_treats_malformed_size_as_zero() -> None:
-    # un tag de taille PRÉSENT mais malformé (UINT32 déclaré, 1 octet) lève EcProtocolError à
-    # int_value() ; _optional_partfile_int l'avale → 0 (jamais fatal, réf. EC §3, piège 4).
+    # entrée valide (enfant hash 0x031E présent) avec un tag de taille PRÉSENT mais malformé
+    # (UINT32 déclaré, 1 octet) → int_value() lève EcProtocolError ; _optional_partfile_int
+    # l'avale → 0 (jamais fatal, réf. EC §3, piège 4). L'entrée n'est PAS écartée (le hash y est).
+    hash_child = EcTag(
+        codes.EC_TAG_PARTFILE_HASH, codes.EC_TAGTYPE_HASH16, bytes.fromhex(_HASH), ()
+    )
     bad_full = EcTag(codes.EC_TAG_PARTFILE_SIZE_FULL, codes.EC_TAGTYPE_UINT32, b"\x01", ())
-    entry = EcTag(codes.EC_TAG_PARTFILE, codes.EC_TAGTYPE_HASH16, bytes.fromhex(_HASH), (bad_full,))
+    entry = EcTag(codes.EC_TAG_PARTFILE, codes.EC_TAGTYPE_UINT8, bytes([1]), (hash_child, bad_full))
     client = _connected_client(_ScriptedTransport([EcPacket(codes.EC_OP_DLOAD_QUEUE, (entry,))]))
     queue = await client.download_queue()
     assert queue == (DownloadEntry(ed2k_hash=_HASH, size_done=0, size_full=0),)
