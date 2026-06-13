@@ -1,3 +1,5 @@
+from collections.abc import Mapping, Sequence
+
 from emule_indexer.domain.matching.engine import (
     DecisionRecord,
     DownloadCandidate,
@@ -14,6 +16,7 @@ class _StubRepository:
     def __init__(self) -> None:
         self.observations: list[FileObservation] = []
         self.decisions: list[tuple[str, MatchDecision]] = []
+        self.verifications: list[tuple[str, str, dict[str, object], list[object]]] = []
 
     def record_observation(self, observation: FileObservation) -> None:
         self.observations.append(observation)
@@ -29,6 +32,15 @@ class _StubRepository:
 
     def last_observation(self, ed2k_hash: str) -> ObservedFile | None:
         return None
+
+    def record_verification(
+        self,
+        ed2k_hash: str,
+        verdict: str,
+        real_meta: Mapping[str, object],
+        checks: Sequence[object],
+    ) -> None:
+        self.verifications.append((ed2k_hash, verdict, dict(real_meta), list(checks)))
 
 
 def test_protocol_is_satisfied_structurally() -> None:
@@ -55,5 +67,7 @@ def test_protocol_is_satisfied_structurally() -> None:
     assert repository.last_decision(observation.ed2k_hash) is None
     assert repository.download_decisions() == ()
     assert repository.last_observation(observation.ed2k_hash) is None
+    repository.record_verification(observation.ed2k_hash, "unverified", {"k": 1}, ["c"])
     assert stub.observations == [observation]
     assert stub.decisions == [(observation.ed2k_hash, decision)]
+    assert stub.verifications == [(observation.ed2k_hash, "unverified", {"k": 1}, ["c"])]

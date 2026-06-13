@@ -22,6 +22,7 @@ ce pragma commettrait une observation ORPHELINE. Le rollback attrape ``BaseExcep
 import json
 import re
 import sqlite3
+from collections.abc import Mapping, Sequence
 from contextlib import suppress
 
 from emule_indexer.adapters.persistence_sqlite.connection import Clock, utc_iso, utc_now
@@ -48,6 +49,11 @@ INSERT INTO file_observations (
 
 _INSERT_DECISION = """
 INSERT INTO match_decisions (ed2k_hash, target_id, rule_name, tier, decided_at, node_id)
+VALUES (?, ?, ?, ?, ?, ?)
+"""
+
+_INSERT_VERIFICATION = """
+INSERT INTO file_verifications (ed2k_hash, verdict, real_meta, checks, verified_at, node_id)
 VALUES (?, ?, ?, ?, ?, ?)
 """
 
@@ -180,3 +186,34 @@ class SqliteCatalogRepository:
         if row is None:
             return None
         return ObservedFile(filename=row[0], size_bytes=row[1])
+
+    def record_verification(
+        self,
+        ed2k_hash: str,
+        verdict: str,
+        real_meta: Mapping[str, object],
+        checks: Sequence[object],
+    ) -> None:
+        """INSERT seul (autocommit) d'un verdict (spec verify §5). Append-only (trigger).
+
+        Template ``record_decision`` : garde canonique du hash AVANT l'INSERT (un hash non
+        canonique est un bug appelant → ``PersistenceError`` clair, pas un diagnostic FK
+        opaque) ; ``real_meta``/``checks`` sérialisés JSON (``ensure_ascii=False``, le verdict
+        NO-OP les rend vides mais D-analysis les remplira) ; ``verified_at``/``node_id`` stampés
+        par l'adapter (le domaine ignore les colonnes de persistance). Fichier inconnu → FK
+        violée → ``PersistenceError`` via ``wrap_sqlite_errors``.
+        """
+        if not _CANONICAL_HASH_RE.fullmatch(ed2k_hash):
+            raise PersistenceError(f"hash eD2k non canonique : {ed2k_hash!r}")
+        with wrap_sqlite_errors():
+            self._connection.execute(
+                _INSERT_VERIFICATION,
+                (
+                    ed2k_hash,
+                    verdict,
+                    json.dumps(real_meta, ensure_ascii=False),
+                    json.dumps(list(checks), ensure_ascii=False),
+                    utc_iso(self._clock()),
+                    self._node_id,
+                ),
+            )

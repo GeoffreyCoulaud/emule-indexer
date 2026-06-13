@@ -9,6 +9,7 @@ Le port n'importe QUE le domaine. Les stubs tiennent sur UNE ligne (le ``def`` s
 persistance).
 """
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -37,6 +38,9 @@ class CatalogRepository(Protocol):
     DERNIER verdict est tier=download (à rejouer par la boucle de download). ``last_observation``
     rend l':class:`ObservedFile` la plus récente d'un hash (nom+taille pour le lien ed2k), ou
     ``None``. Ces trois lectures sont inoffensives (aucune écriture).
+    ``record_verification`` (spec verify §5) append une ligne ``file_verifications`` (catalogue
+    append-only, taguée ``node_id``) — la décision du verdict est prise ailleurs (le verifier),
+    l'adapter ne fait que persister.
     """
 
     def record_observation(self, observation: FileObservation) -> None: ...
@@ -48,3 +52,11 @@ class CatalogRepository(Protocol):
     def download_decisions(self) -> tuple[DownloadCandidate, ...]: ...
 
     def last_observation(self, ed2k_hash: str) -> ObservedFile | None: ...
+
+    def record_verification(
+        self,
+        ed2k_hash: str,
+        verdict: str,
+        real_meta: Mapping[str, object],
+        checks: Sequence[object],
+    ) -> None: ...
