@@ -33,6 +33,8 @@ _IS_DOWNLOADED = "SELECT 1 FROM downloads WHERE ed2k_hash = ?"
 
 _ACTIVE_STATES = "SELECT ed2k_hash, state FROM downloads"
 
+_GET_TARGET_ID = "SELECT target_id FROM downloads WHERE ed2k_hash = ?"
+
 # Le plafond ne compte que les downloads ACTIFS (états non terminaux, DÉCISION D7).
 # Les 3 terminaux listés ici DOIVENT rester synchronisés avec _TERMINAL_STATES (states.py).
 _COMMITTED_BYTES = (
@@ -97,3 +99,17 @@ class SqliteDownloadRepository:
         with wrap_sqlite_errors():
             rows = self._connection.execute(_ACTIVE_STATES).fetchall()
         return {row[0]: DownloadState(row[1]) for row in rows}
+
+    def get_target_id(self, ed2k_hash: str) -> str | None:
+        """``target_id`` d'un hash téléchargé, ou ``None`` (jamais enfilé) — LECTURE.
+
+        La boucle de vérification (spec verify §6, DÉCISION DV11) s'en sert pour bâtir un
+        ``expected`` minimal ; le NO-OP l'ignore, D-analysis l'enrichira. ``None`` est un cas
+        normal (une tâche peut être claimée pour un hash dont la ligne download a été promue/
+        purgée — la boucle bâtit alors ``expected={}``).
+        """
+        with wrap_sqlite_errors():
+            row = self._connection.execute(_GET_TARGET_ID, (ed2k_hash,)).fetchone()
+        if row is None:
+            return None
+        return str(row[0])

@@ -119,3 +119,14 @@ def test_record_queued_is_atomic_on_injected_failure(
     with pytest.raises(PersistenceError, match="panne injectée"):
         repository.record_queued(_A, "S2E062A", 100)
     assert repository.is_downloaded(_A) is False
+
+
+def test_get_target_id_returns_target_for_known_hash(
+    repository: SqliteDownloadRepository,
+) -> None:
+    repository.record_queued(_A, "S2E062A", 100)
+    assert repository.get_target_id(_A) == "S2E062A"
+
+
+def test_get_target_id_is_none_for_unknown_hash(repository: SqliteDownloadRepository) -> None:
+    assert repository.get_target_id(_A) is None
