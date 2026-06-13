@@ -15,13 +15,13 @@ import argparse
 import asyncio
 import os
 import sys
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Callable, Sequence
 
 from emule_indexer.adapters.mule_ec.client import AmuleEcClient
 from emule_indexer.adapters.mule_ec.errors import EcError
+from emule_indexer.ports.mule_client import NetworkStatus
 from emule_indexer.ports.mule_download_client import DownloadEntry, MuleDownloadClient
 
-Sleeper = Callable[[float], Awaitable[None]]
 ClientFactory = Callable[[argparse.Namespace], MuleDownloadClient]
 
 
@@ -62,7 +62,7 @@ async def run_probe(client: MuleDownloadClient, args: argparse.Namespace) -> int
     return 0
 
 
-def format_status(status: object) -> str:
+def format_status(status: NetworkStatus) -> str:
     return f"[probe] statut réseau : {status}"
 
 

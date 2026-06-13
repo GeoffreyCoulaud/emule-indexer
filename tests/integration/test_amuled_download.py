@@ -15,6 +15,7 @@ from testcontainers.core.wait_strategies import LogMessageWaitStrategy
 from emule_indexer.adapters.mule_ec.client import AmuleEcClient
 from emule_indexer.adapters.mule_ec.errors import EcFailureError
 from emule_indexer.domain.download.ed2k_link import build_ed2k_link
+from emule_indexer.ports.mule_download_client import DownloadEntry
 
 pytestmark = pytest.mark.download_integration
 
@@ -56,6 +57,7 @@ async def test_add_link_then_appears_in_download_queue(amuled: tuple[str, int]) 
             return
         queue = await client.download_queue()
         assert isinstance(queue, tuple)
+        assert all(isinstance(entry, DownloadEntry) for entry in queue)
         # Le hash ajouté devrait apparaître dans la file (statut lisible). On TOLÈRE une file
         # vide si amuled a déduppé/rejeté silencieusement : la MÉCANIQUE (add_link accepté +
         # download_queue décodée) est ce qui fait foi (option A).
