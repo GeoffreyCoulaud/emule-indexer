@@ -27,6 +27,7 @@ from emule_indexer.adapters.mule_ec.mapping import map_search_results
 from emule_indexer.adapters.mule_ec.transport import EcTransport, open_ec_transport
 from emule_indexer.domain.observation import FileObservation
 from emule_indexer.ports.mule_client import KadStatus, NetworkStatus, SearchChannel
+from emule_indexer.ports.mule_download_client import DownloadEntry
 
 _CLIENT_NAME = "emule-indexer"
 _CLIENT_VERSION = "0.5.0"
@@ -157,6 +158,41 @@ class AmuleEcClient:
             raise EcProtocolError("réponse GET_CONNSTATE sans EC_TAG_CONNSTATE")
         return _parse_connstate(connstate)
 
+    async def add_link(self, ed2k_link: str) -> None:
+        """Ajoute un lien ed2k à la file de download d'amuled (réf. EC, DÉCISION D1).
+
+        Émet ``EC_OP_ADD_LINK`` avec un ``EC_TAG_STRING`` portant le lien ; le succès est
+        signalé par ``EC_OP_NOOP`` (et NON ``EC_OP_STRINGS`` — vérifié sur ExternalConn.cpp).
+        Un échec applicatif (``EC_OP_FAILED``) lève ``EcFailureError`` via ``_request`` ; un
+        flux mort lève ``EcConnectError``/``EcTimeoutError`` (sous ``MuleUnreachableError``).
+        """
+        await self._request(
+            EcPacket(codes.EC_OP_ADD_LINK, (string_tag(codes.EC_TAG_STRING, ed2k_link),)),
+            codes.EC_OP_NOOP,
+        )
+
+    async def download_queue(self) -> tuple[DownloadEntry, ...]:
+        """Snapshot de la file de download (réf. EC, DÉCISION D1/D2). NE LIT JAMAIS les octets.
+
+        Émet ``EC_OP_GET_DLOAD_QUEUE`` au détail CMD ; la réponse ``EC_OP_DLOAD_QUEUE``
+        contient N enfants ``EC_TAG_PARTFILE`` dont la valeur PROPRE est le hash (HASH16) et
+        les enfants portent name/size_full/size_done/status. Une entrée sans hash exploitable
+        est ÉCARTÉE (tolérance aux inconnus, comme ``map_search_results`` — jamais fatale).
+        """
+        request = EcPacket(
+            codes.EC_OP_GET_DLOAD_QUEUE,
+            (uint_tag(codes.EC_TAG_DETAIL_LEVEL, codes.EC_DETAIL_CMD),),
+        )
+        reply = await self._request(request, codes.EC_OP_DLOAD_QUEUE)
+        entries: list[DownloadEntry] = []
+        for tag in reply.tags:
+            if tag.name != codes.EC_TAG_PARTFILE:
+                continue
+            entry = _map_partfile(tag)
+            if entry is not None:
+                entries.append(entry)
+        return tuple(entries)
+
     async def _authenticate(self, transport: EcTransport) -> None:
         auth_req = EcPacket(
             codes.EC_OP_AUTH_REQ,
@@ -255,4 +291,31 @@ def _parse_connstate(connstate: EcTag) -> NetworkStatus:
         kad_status=kad,
         server_name=server_name,
         server_addr=server_addr,
+    )
+
+
+def _optional_partfile_int(entry: EcTag, name: int) -> int:
+    """Entier optionnel d'une entrée partfile : absence ou malformé → 0 (réf. EC §3)."""
+    tag = entry.find(name)
+    if tag is None:
+        return 0
+    try:
+        return tag.int_value()
+    except EcProtocolError:
+        return 0
+
+
+def _map_partfile(entry: EcTag) -> DownloadEntry | None:
+    """Une entrée ``EC_TAG_PARTFILE`` → ``DownloadEntry``, ou ``None`` si le hash est inexploitable.
+
+    La valeur PROPRE de l'entrée est le hash (HASH16, 16 octets) ; les tailles sont des
+    enfants. Une valeur propre qui n'est pas un HASH16 de 16 octets écarte l'entrée (le hash
+    est le SEUL identifiant stable — sans lui, l'entrée est inutilisable, jamais persistée).
+    """
+    if entry.tag_type != codes.EC_TAGTYPE_HASH16 or len(entry.value) != 16:
+        return None
+    return DownloadEntry(
+        ed2k_hash=entry.value.hex(),
+        size_done=_optional_partfile_int(entry, codes.EC_TAG_PARTFILE_SIZE_DONE),
+        size_full=_optional_partfile_int(entry, codes.EC_TAG_PARTFILE_SIZE_FULL),
     )

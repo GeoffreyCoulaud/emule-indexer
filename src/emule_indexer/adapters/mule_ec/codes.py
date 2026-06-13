@@ -17,6 +17,9 @@ EC_FLAG_UNKNOWN_MASK: Final[int] = 0xFF7F7F08
 
 # --- Opcodes (réf. §7) ----------------------------------------------------------------
 EC_OP_NOOP: Final[int] = 0x01
+EC_OP_ADD_LINK: Final[int] = 0x09  # ajoute un lien ed2k ; réponse NOOP
+EC_OP_GET_DLOAD_QUEUE: Final[int] = 0x0D  # requête de la file de download (détail CMD)
+EC_OP_DLOAD_QUEUE: Final[int] = 0x1F  # réponse : N enfants EC_TAG_PARTFILE
 EC_OP_AUTH_REQ: Final[int] = 0x02
 EC_OP_AUTH_FAIL: Final[int] = 0x03
 EC_OP_AUTH_OK: Final[int] = 0x04
@@ -80,6 +83,8 @@ EC_TAG_STATS_KAD_FILES: Final[int] = 0x020C
 EC_TAG_PARTFILE: Final[int] = 0x0300
 EC_TAG_PARTFILE_NAME: Final[int] = 0x0301
 EC_TAG_PARTFILE_SIZE_FULL: Final[int] = 0x0303
+EC_TAG_PARTFILE_SIZE_DONE: Final[int] = 0x0306  # octets transférés (complet = done >= full)
+EC_TAG_PARTFILE_ED2K_LINK: Final[int] = 0x030E  # lien reconstruit (non utilisé ici)
 EC_TAG_PARTFILE_STATUS: Final[int] = 0x0308
 EC_TAG_PARTFILE_SOURCE_COUNT: Final[int] = 0x030A
 EC_TAG_PARTFILE_SOURCE_COUNT_XFER: Final[int] = 0x030D  # = sources COMPLÈTES (réf. §9 piège 12)
