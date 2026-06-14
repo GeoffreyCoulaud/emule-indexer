@@ -1,0 +1,76 @@
+"""Config de l'analyseur (spec analysis §8 — DA10).
+
+``AnalysisConfig`` (frozen) lue depuis l'environnement par ``from_env`` : checks activés,
+chemin ffprobe, timeout, rlimits, cap d'égress, taille d'en-tête sniffée, dossier de
+quarantaine. Le PARENT (service) l'utilise pour les rlimits/timeout/env minimal du spawn ;
+l'ENFANT relit la part « checks » (``enabled_checks``/``ffprobe_path``/``header_bytes``) depuis
+l'env minimal que le parent lui passe. Défauts raffinables ; valeurs invalides → ``ValueError``
+(fail-fast au démarrage du service). Côté crawler : aucune config nouvelle.
+"""
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+
+_DEFAULT_ENABLED = ("type_sniff", "ffprobe")
+_DEFAULT_QUARANTINE = "/quarantine"
+
+
+@dataclass(frozen=True, slots=True)
+class AnalysisConfig:
+    """Paramètres figés de l'analyseur (un seul objet partagé parent/enfant via l'env)."""
+
+    enabled_checks: tuple[str, ...]
+    ffprobe_path: str
+    timeout_s: float
+    rlimit_cpu_s: int
+    rlimit_as_bytes: int
+    rlimit_nproc: int
+    rlimit_nofile: int
+    rlimit_fsize_bytes: int
+    egress_cap_bytes: int
+    header_bytes: int
+    quarantine_dir: str
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str]) -> "AnalysisConfig":
+        """Construit la config depuis ``env``. Valeur non parsable / liste vide → ``ValueError``."""
+        return cls(
+            enabled_checks=_parse_checks(env.get("ENABLED_CHECKS")),
+            ffprobe_path=env.get("FFPROBE_PATH", "ffprobe"),
+            timeout_s=_parse_float(env.get("ANALYSIS_TIMEOUT_S"), 30.0),
+            rlimit_cpu_s=_parse_int(env.get("RLIMIT_CPU_S"), 20),
+            rlimit_as_bytes=_parse_int(env.get("RLIMIT_AS_BYTES"), 512 * 1024 * 1024),
+            rlimit_nproc=_parse_int(env.get("RLIMIT_NPROC"), 64),
+            rlimit_nofile=_parse_int(env.get("RLIMIT_NOFILE"), 64),
+            rlimit_fsize_bytes=_parse_int(env.get("RLIMIT_FSIZE_BYTES"), 16 * 1024 * 1024),
+            egress_cap_bytes=_parse_int(env.get("EGRESS_CAP_BYTES"), 65536),
+            header_bytes=_parse_int(env.get("HEADER_BYTES"), 4096),
+            quarantine_dir=env.get("QUARANTINE_DIR", _DEFAULT_QUARANTINE),
+        )
+
+
+def _parse_checks(raw: str | None) -> tuple[str, ...]:
+    if raw is None:
+        return _DEFAULT_ENABLED
+    checks = tuple(item.strip() for item in raw.split(",") if item.strip())
+    if not checks:
+        raise ValueError("ENABLED_CHECKS ne doit pas être vide")
+    return checks
+
+
+def _parse_int(raw: str | None, default: int) -> int:
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ValueError(f"entier attendu, reçu {raw!r}") from exc
+
+
+def _parse_float(raw: str | None, default: float) -> float:
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ValueError(f"flottant attendu, reçu {raw!r}") from exc
