@@ -1,0 +1,255 @@
+"""Smoke e2e de la stack docker compose ASSEMBLÉE, sans VPN (spec packaging §5 — F-D1).
+
+Run dédié : ( cd packages/crawler && uv run pytest -m compose_integration --no-cov )
+Docker + docker compose v2 requis. Monte verifier + crawler + amuled (gluetun retiré via
+compose.smoke.yaml) et asserte le CÂBLAGE — AUCUN téléchargement réel (amuled n'a ni serveur
+eD2k ni VPN ; seul son serveur EC est sollicité) :
+  1. `docker compose build` réussit (les 2 images se construisent).
+  2. full : verifier devient healthy (/health 200) ET le crawler reste Up.
+  3. observer : crawler démarre SANS verifier et reste Up.
+  4. full fail-fast : crawler full avec verifier_url mais verifier ABSENT => exit != 0.
+Volumes éphémères : chaque scénario fait `docker compose down -v` dans un finally.
+
+Mécaniques arrêtées EMPIRIQUEMENT (compose v5, Docker 29) :
+  * Les chemins de volumes relatifs des fichiers compose (`./deploy/smoke/...`) sont résolus
+    contre le `working_dir` du projet : tous les `subprocess.run` tournent donc `cwd=_REPO_ROOT`.
+  * Les DB sont écrites par le crawler (uid 999, ``read_only: true``). Les volumes nommés
+    ``catalog-db``/``local-db`` sont créés *root* => le crawler ne peut pas y créer ses fichiers
+    SQLite (défaut de perms hors périmètre du smoke). Chaque override de scénario remplace donc
+    la liste de volumes (``!override``) pour LARGUER ces 2 volumes nommés et monte ``/data/catalog``
+    + ``/data/local`` en **tmpfs** (inscriptibles par 999, éphémères — idéal pour un smoke).
+  * Full : un override ré-ajoute ``depends_on: { verifier: service_healthy }`` (absent de la base
+    smoke pour que le profil ``observer`` valide) => démarrage DÉTERMINISTE après le verifier sain.
+  * Observer : un override re-monte ``local.observer.yaml`` (pas de ``verifier_url``) et on lève
+    le profil ``observer`` (le service verifier n'y existe pas).
+  * Fail-fast : un override force ``restart: "no"`` (sinon ``unless-stopped`` boucle à l'infini) ;
+    on lève amuled+crawler SANS profil (=> verifier ABSENT) ; le crawler full health-check le
+    verifier au démarrage, échoue, et SE FIGE en ``exited`` avec un code != 0.
+"""
+
+import json
+import os
+import subprocess
+import time
+import uuid
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+
+pytestmark = pytest.mark.compose_integration
+
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_COMPOSE = _REPO_ROOT / "compose.yaml"
+_SMOKE = _REPO_ROOT / "compose.smoke.yaml"
+
+# Projet isolé (préfixe unique par run) pour ne JAMAIS toucher une stack réelle de l'hôte.
+_PROJECT = f"emule_smoke_{uuid.uuid4().hex[:8]}"
+
+# gluetun est désactivé dans le smoke, mais compose interpole ses variables au PARSE : on les
+# stube pour que `config`/`build`/`up` n'échouent pas sur des variables manquantes.
+_ENV_STUB = {
+    "WIREGUARD_PRIVATE_KEY": "smoke-unused",
+    "AMULE_EC_PASSWORD": "smoke-unused",
+    "SERVER_COUNTRIES": "",
+}
+
+# Listes de volumes des overrides : on LARGUE catalog-db/local-db (volumes nommés root-owned)
+# au profit de tmpfs (cf. le module docstring). Les chemins restent relatifs au working_dir.
+_FULL_LOCAL_VOLUMES = [
+    "./deploy/smoke/local.full.yaml:/app/config/local.yaml:ro",
+    "./deploy/smoke/crawler.yaml:/app/config/crawler.yaml:ro",
+    "./deploy/smoke/targets.yaml:/app/config/targets.yaml:ro",
+    "./deploy/smoke/matcher.yaml:/app/config/matcher.yaml:ro",
+    "quarantine:/data/quarantine",
+]
+_OBSERVER_LOCAL_VOLUMES = [
+    "./deploy/smoke/local.observer.yaml:/app/config/local.yaml:ro",
+    "./deploy/smoke/crawler.yaml:/app/config/crawler.yaml:ro",
+    "./deploy/smoke/targets.yaml:/app/config/targets.yaml:ro",
+    "./deploy/smoke/matcher.yaml:/app/config/matcher.yaml:ro",
+    "quarantine:/data/quarantine",
+]
+_TMPFS_DB = ["/tmp", "/data/catalog", "/data/local"]
+
+
+def _write_override(tmp_path: Path, name: str, crawler_body: str) -> Path:
+    """Écrit un fichier d'override de scénario (YAML) sous tmp_path et renvoie son chemin."""
+    path = tmp_path / name
+    path.write_text(crawler_body)
+    return path
+
+
+def _run(*args: str, files: tuple[Path, ...], timeout: float) -> subprocess.CompletedProcess[str]:
+    """Lance `docker compose -p <projet> -f ... <args>` depuis le repo root (cwd)."""
+    file_flags: list[str] = []
+    for path in files:
+        file_flags += ["-f", str(path)]
+    command = ["docker", "compose", "-p", _PROJECT, *file_flags, *args]
+    return subprocess.run(
+        command,
+        cwd=_REPO_ROOT,
+        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **_ENV_STUB},
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def _down(files: tuple[Path, ...]) -> None:
+    """Tear-down idempotent : retire conteneurs + volumes + orphelins du projet.
+
+    ``--profile full`` est OBLIGATOIRE : sans profil actif, ``down`` ignore les services
+    profile-gated (compose v5) et laisserait tourner un verifier d'un scénario précédent
+    (le service verifier n'est défini que dans le profil ``full``). Le profil ``full`` est un
+    sur-ensemble (amuled+crawler+verifier), donc il nettoie aussi les scénarios observer/fail-fast.
+    """
+    _run("--profile", "full", "down", "-v", "--remove-orphans", files=files, timeout=180)
+
+
+def _service_state(service: str, files: tuple[Path, ...]) -> tuple[str, int]:
+    """(State, ExitCode) du service via `ps -a --format json` (un objet JSON par ligne)."""
+    result = _run("ps", "-a", "--format", "json", service, files=files, timeout=60)
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        obj = json.loads(line)
+        if obj.get("Service") == service:
+            return str(obj.get("State")), int(obj.get("ExitCode"))
+    raise AssertionError(f"service {service!r} introuvable dans `ps` : {result.stdout!r}")
+
+
+def _wait_state(
+    service: str, target: str, files: tuple[Path, ...], *, attempts: int = 30, delay: float = 2.0
+) -> tuple[str, int]:
+    """Boucle jusqu'à ce que `service` atteigne `target` (ou échec après attempts)."""
+    last: tuple[str, int] = ("<absent>", -1)
+    for _ in range(attempts):
+        last = _service_state(service, files)
+        if last[0] == target:
+            return last
+        time.sleep(delay)
+    raise AssertionError(f"{service} n'a pas atteint {target!r} (dernier état : {last})")
+
+
+@pytest.fixture
+def project_files() -> Iterator[tuple[Path, ...]]:
+    """Fichiers compose de base (compose.yaml + compose.smoke.yaml) + tear-down encadrant.
+
+    Les overrides de scénario s'ajoutent par-dessus dans chaque test ; le `down -v` ici garantit
+    qu'aucun résidu d'un run précédent ne traîne (avant) et que tout est nettoyé (après).
+    """
+    base = (_COMPOSE, _SMOKE)
+    _down(base)
+    try:
+        yield base
+    finally:
+        _down(base)
+
+
+def test_build_succeeds(project_files: tuple[Path, ...]) -> None:
+    result = _run("--profile", "full", "build", files=project_files, timeout=900)
+    assert result.returncode == 0, result.stderr
+
+
+def test_full_verifier_healthy_and_crawler_up(
+    project_files: tuple[Path, ...], tmp_path: Path
+) -> None:
+    override = _write_override(
+        tmp_path,
+        "full.override.yaml",
+        _yaml_crawler(
+            depends_on=(
+                "    depends_on:\n"
+                "      amuled:\n"
+                "        condition: service_started\n"
+                "      verifier:\n"
+                "        condition: service_healthy\n"
+            ),
+            volumes=_FULL_LOCAL_VOLUMES,
+            tmpfs=_TMPFS_DB,
+        ),
+    )
+    files = (*project_files, override)
+    result = _run("--profile", "full", "up", "-d", "--build", files=files, timeout=900)
+    assert result.returncode == 0, result.stderr
+
+    # depends_on: service_healthy => le verifier est déjà sain quand le crawler démarre.
+    assert _service_state("verifier", files)[0] == "running"
+    assert _wait_state("crawler", "running", files)[0] == "running"
+
+    # /health via exec dans le verifier (le réseau verify-internal est interne, sans Internet).
+    health = _run(
+        "exec",
+        "-T",
+        "verifier",
+        "python",
+        "-c",
+        "import urllib.request;print(urllib.request.urlopen('http://localhost:8000/health').status)",
+        files=files,
+        timeout=60,
+    )
+    assert health.returncode == 0, health.stderr
+    assert health.stdout.strip() == "200"
+
+
+def test_observer_starts_without_verifier(project_files: tuple[Path, ...], tmp_path: Path) -> None:
+    override = _write_override(
+        tmp_path,
+        "observer.override.yaml",
+        _yaml_crawler(
+            depends_on=None,
+            volumes=_OBSERVER_LOCAL_VOLUMES,
+            tmpfs=_TMPFS_DB,
+        ),
+    )
+    files = (*project_files, override)
+    result = _run("--profile", "observer", "up", "-d", "--build", files=files, timeout=900)
+    assert result.returncode == 0, result.stderr
+
+    # Le profil observer ne définit PAS le verifier ; le crawler démarre quand même et reste Up.
+    assert _wait_state("crawler", "running", files)[0] == "running"
+
+
+def test_full_without_verifier_fails_fast(project_files: tuple[Path, ...], tmp_path: Path) -> None:
+    override = _write_override(
+        tmp_path,
+        "failfast.override.yaml",
+        _yaml_crawler(
+            depends_on=None,
+            volumes=_FULL_LOCAL_VOLUMES,
+            tmpfs=_TMPFS_DB,
+            restart_no=True,
+        ),
+    )
+    files = (*project_files, override)
+    # On lève UNIQUEMENT amuled + crawler (sans `--profile full`) => le verifier est ABSENT.
+    # Config full (verifier_url présent) => le crawler health-check le verifier au démarrage,
+    # échoue, et avec restart: "no" SE FIGE en exited (pas de boucle de redémarrage).
+    result = _run("up", "-d", "--build", "amuled", "crawler", files=files, timeout=900)
+    assert result.returncode == 0, result.stderr
+
+    state, exit_code = _wait_state("crawler", "exited", files)
+    assert state == "exited"
+    assert exit_code != 0
+
+
+def _yaml_crawler(
+    *,
+    depends_on: str | None,
+    volumes: list[str],
+    tmpfs: list[str],
+    restart_no: bool = False,
+) -> str:
+    """Compose un override `services.crawler` (volumes !override + tmpfs DB inscriptibles)."""
+    lines = ["services:", "  crawler:"]
+    if restart_no:
+        lines.append('    restart: !override "no"')
+    if depends_on is not None:
+        lines.append(depends_on.rstrip("\n"))
+    lines.append("    volumes: !override")
+    lines += [f"      - {volume}" for volume in volumes]
+    lines.append("    tmpfs:")
+    lines += [f"      - {mount}" for mount in tmpfs]
+    return "\n".join(lines) + "\n"
