@@ -162,7 +162,7 @@ affectés.)
 
 - **Homelab (pull depuis GHCR)** :
   ```bash
-  docker compose pull
+  docker compose --profile full pull   # `--profile` requis : tous les services sont profilés (un `pull` nu ne tire rien)
   docker compose --profile full up -d
   ```
   **Build local** plutôt que pull : `docker compose --profile full build`.
@@ -190,7 +190,7 @@ Les packages GHCR sont **privés par défaut**. Deux options :
 - S'authentifier avant le pull :
   ```bash
   docker login ghcr.io -u <user>   # PAT avec scope read:packages
-  docker compose pull
+  docker compose --profile full pull   # `--profile` requis : tous les services sont profilés (un `pull` nu ne tire rien)
   ```
 
 Références d'images (lowercase) :
