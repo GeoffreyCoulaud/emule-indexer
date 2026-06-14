@@ -1,0 +1,127 @@
+# Topologie de deploiement emule-indexer (spec packaging §4/§6).
+# Profils : `observer` (gluetun+amuled+crawler, pas de download/verif) ; `full` (+ verifier,
+# auto-download + verification). Secrets ProtonVPN dans .env (gitignore ; voir .env.example).
+# Le mode du crawler vient de config/local.yaml monte (verifier_url present => full).
+# Durcissement niveau conteneur (F-D2) sur les services batis ; gluetun/amuled = exceptions.
+
+services:
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    profiles: [observer, full]
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      VPN_SERVICE_PROVIDER: protonvpn
+      VPN_TYPE: wireguard
+      WIREGUARD_PRIVATE_KEY: ${WIREGUARD_PRIVATE_KEY}
+      SERVER_COUNTRIES: ${SERVER_COUNTRIES:-}
+      # NAT-PMP/port-forwarding ProtonVPN : le port-sync (High-ID) est un follow-up (F-D3).
+      VPN_PORT_FORWARDING: "on"
+    networks:
+      - ec
+    restart: unless-stopped
+
+  amuled:
+    image: ngosang/amule:3.0.0-1
+    profiles: [observer, full]
+    # Partage la netns de gluetun (killswitch : tout le P2P sort par le VPN). Pas de `networks:`
+    # quand network_mode est `service:` — amuled est joignable via gluetun sur le port EC 4712.
+    network_mode: "service:gluetun"
+    depends_on:
+      - gluetun
+    environment:
+      # Mot de passe EC (secret) — partage avec le crawler via local.yaml. PUID/PGID : voir
+      # l'inconnu fleche #3 (l'image impose son propre user ; on ne durcit que ce qu'elle tolere).
+      GUI_PWD: ${AMULE_EC_PASSWORD}
+    volumes:
+      - amule-state:/home/amule/.aMule
+      - quarantine:/data/quarantine        # staging : amuled ecrit les fichiers completes ici
+    restart: unless-stopped
+
+  crawler:
+    image: ghcr.io/geoffreycoulaud/emule-indexer-crawler:latest
+    build:
+      context: .
+      dockerfile: packages/crawler/Dockerfile
+    profiles: [observer, full]
+    depends_on:
+      - amuled
+    command:
+      - "--local"
+      - "/app/config/local.yaml"
+      - "--crawler"
+      - "/app/config/crawler.yaml"
+      - "--targets"
+      - "/app/config/targets.yaml"
+      - "--matcher"
+      - "/app/config/matcher.yaml"
+    volumes:
+      - ./config:/app/config:ro                # config (local.yaml decide observer/full)
+      - quarantine:/data/quarantine            # cible du os.replace (meme FS que staging)
+      - catalog-db:/data/catalog               # catalog.db (chemin local.yaml : /data/catalog/catalog.db)
+      - local-db:/data/local                   # local.db   (chemin local.yaml : /data/local/local.db)
+    networks:
+      - ec
+      - verify-internal
+      - egress
+    user: "999:999"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+    pids_limit: 256
+    mem_limit: 512m
+    restart: unless-stopped
+
+  verifier:
+    image: ghcr.io/geoffreycoulaud/emule-indexer-verifier:latest
+    build:
+      context: .
+      dockerfile: packages/verifier/Dockerfile
+    profiles: [full]                            # full UNIQUEMENT
+    environment:
+      QUARANTINE_DIR: /quarantine
+      VERIFIER_HOST: 0.0.0.0
+      VERIFIER_PORT: "8000"
+    volumes:
+      - quarantine:/quarantine:ro               # lit la quarantaine en RO (jamais d'ecriture)
+    networks:
+      - verify-internal                         # SEUL sur le reseau interne (pas d'Internet)
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:8000/health').status==200 else sys.exit(1)"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    user: "999:999"
+    read_only: true
+    tmpfs:
+      - /tmp                                     # mkdtemp de l'enfant d'analyse (D-analysis)
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+    pids_limit: 256
+    mem_limit: 768m
+    restart: unless-stopped
+
+networks:
+  ec: {}
+  verify-internal:
+    internal: true                              # pas d'Internet pour le verifier (ni son enfant)
+  egress: {}
+
+volumes:
+  quarantine: {}
+  catalog-db: {}
+  local-db: {}
+  amule-state: {}
