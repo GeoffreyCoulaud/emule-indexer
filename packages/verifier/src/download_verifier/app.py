@@ -12,16 +12,22 @@ est l'instance que ``uvicorn`` charge par chemin d'import (``download_verifier.a
 """
 
 import json
+import logging
 import os
 import re
+import time
 from pathlib import Path
 
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from download_verifier.check import verify_file
+from download_verifier.metrics import VerifierMetrics
+
+_logger = logging.getLogger("download_verifier.app")
 
 # Hash eD2k canonique (32 hex minuscules) : la SEULE forme acceptée → jamais de traversal hors
 # du dossier de quarantaine (un "../" ou un "/" ne matche pas et donne 400).
@@ -58,13 +64,23 @@ async def verify_endpoint(request: Request) -> JSONResponse:
     expected = payload.get("expected", {})
     if not isinstance(expected, dict):
         return _bad_request("expected doit être un objet")
+    metrics: VerifierMetrics = request.app.state.metrics
+    start = time.monotonic()
     verdict, real_meta, checks = verify_file(_quarantine_dir(request) / ed2k_hash, expected)
+    metrics.observe(verdict, time.monotonic() - start)
+    _logger.info("verify hash=%s → verdict=%s", ed2k_hash, verdict)
     return JSONResponse({"verdict": verdict, "real_meta": real_meta, "checks": checks})
 
 
 async def health_endpoint(request: Request) -> JSONResponse:
     """``GET /health`` → 200 (vivacité du service ; gate full-mode du crawler, §7)."""
     return JSONResponse({"status": "ok"})
+
+
+async def metrics_endpoint(request: Request) -> Response:
+    """``GET /metrics`` : exposition Prometheus du registre dédié de l'app."""
+    metrics: VerifierMetrics = request.app.state.metrics
+    return Response(generate_latest(metrics.registry), media_type=CONTENT_TYPE_LATEST)
 
 
 def _quarantine_dir(request: Request) -> Path:
@@ -79,9 +95,11 @@ def build_app(quarantine_dir: Path) -> Starlette:
         routes=[
             Route("/verify", verify_endpoint, methods=["POST"]),
             Route("/health", health_endpoint, methods=["GET"]),
+            Route("/metrics", metrics_endpoint, methods=["GET"]),
         ]
     )
     application.state.quarantine_dir = quarantine_dir
+    application.state.metrics = VerifierMetrics()
     return application
 
 

@@ -148,3 +148,27 @@ async def test_verify_rejects_non_dict_expected(quarantine: Path) -> None:
     async with _client(quarantine) as client:
         response = await client.post("/verify", json={"hash": "e" * 32, "expected": "string"})
     assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_metrics_endpoint_responds(tmp_path: Path) -> None:
+    async with _client(tmp_path) as client:
+        response = await client.get("/metrics")
+    assert response.status_code == 200
+    assert "text/plain" in response.headers["content-type"]
+    assert "emule_verifier_requests" in response.text
+
+
+@pytest.mark.asyncio
+async def test_verify_increments_request_counter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import download_verifier.app as app_module
+
+    monkeypatch.setattr(app_module, "verify_file", lambda path, expected: ("clean", {}, ()))
+    (tmp_path / ("a" * 32)).write_bytes(b"x")
+    async with _client(tmp_path) as client:
+        verify = await client.post("/verify", json={"hash": "a" * 32, "expected": {}})
+        metrics = await client.get("/metrics")
+    assert verify.status_code == 200
+    assert 'emule_verifier_requests_total{verdict="clean"} 1.0' in metrics.text
