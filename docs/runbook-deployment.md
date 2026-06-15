@@ -221,6 +221,31 @@ docker compose exec verifier ls /quarantine     # inspecter la quarantaine côt�
 
 ---
 
+## Métriques Prometheus (scrape)
+
+Le crawler expose ses métriques Prometheus sur un port HTTP dédié (`observability.metrics.port`,
+configurable dans `config/crawler.yaml`). Le verifier expose les siennes sur son port de service
+(par défaut `8000`) via la route `/metrics`.
+
+Pour scraper depuis un Prometheus externe :
+- Le **crawler** est accessible depuis le réseau `ec` (et potentiellement `egress`).
+- Le **verifier** est sur le réseau `verify-internal` (`internal: true` — pas d'egress) ; un
+  Prometheus doit **rejoindre ce réseau** pour le scraper, ou exposer le port sur l'hôte.
+
+Le serveur Prometheus reste hors du repo. Exemple de cible `scrape_config` :
+
+```yaml
+scrape_configs:
+  - job_name: 'emule-indexer-crawler'
+    static_configs:
+      - targets: ['crawler:9090']   # port configurable
+  - job_name: 'emule-indexer-verifier'
+    static_configs:
+      - targets: ['verifier:8000']  # même port que le service (/metrics)
+```
+
+---
+
 ## Smoke local
 
 ```bash

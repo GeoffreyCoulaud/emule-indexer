@@ -88,8 +88,10 @@ services:
       QUARANTINE_DIR: /quarantine
       VERIFIER_HOST: 0.0.0.0
       VERIFIER_PORT: "8000"
+      VERIFIER_CONFIG: /config/verifier.yaml
     volumes:
       - quarantine:/quarantine:ro               # lit la quarantaine en RO (jamais d'ecriture)
+      - ./config/verifier.yaml:/config/verifier.yaml:ro
     networks:
       - verify-internal                         # SEUL sur le reseau interne (pas d'Internet)
     healthcheck:

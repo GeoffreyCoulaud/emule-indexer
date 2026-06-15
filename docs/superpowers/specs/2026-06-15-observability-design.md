@@ -92,8 +92,9 @@ vers trois sinks. Côté verifier (microservice), une instrumentation **minimale
    (thread daemon, zéro dep web ajoutée) ; `CollectorRegistry` **injecté** dans le sink ET le serveur
    → tests sur registre jetable (`get_sample_value`), seul le bind est `# pragma: no cover`. Verifier :
    route **`GET /metrics`** (`generate_latest` sur son registre).
-10. **E-D10 — verifier minimal.** Pas d'events/policy/dispatcher. Mini-loader YAML (`log_level` +
-    `metrics`), `/metrics` technique, logging stdlib. N'importe **rien** de `emule_indexer`.
+10. **E-D10 — verifier minimal.** Pas d'events/policy/dispatcher. Mini-loader YAML (`log_level` seul
+    — pas de `metrics.{enabled,port}` : `/metrics` toujours exposé sur le port du service), `/metrics`
+    technique, logging stdlib. N'importe **rien** de `emule_indexer`.
 11. **E-D11 — dépendances.** crawler : `prometheus-client`, `apprise`. verifier : `prometheus-client`,
     `pyyaml`. (Pas d'`apprise` côté verifier : pas d'événement métier + `internal: true` = pas d'egress.)
 12. **E-D12 — zéro régression métier.** Les boucles `application/` gagnent des appels `await
@@ -225,6 +226,10 @@ unité `_seconds`/`_bytes` en suffixe).
 - `emule_verifier_analysis_duration_seconds` (histogram),
 - collectors process par défaut.
 
+Le verifier **n'a pas de port métriques séparé** : `/metrics` est servi sur le port uvicorn du
+service (par défaut 8000). Son YAML (`verifier.yaml`) porte **seulement `log_level`** — pas de
+`metrics.{enabled,port}`.
+
 ## 6. Notifications apprise (E-D7, E-D8)
 
 - **Config** : une liste d'entrées `{url, tag}` (tag ∈ `community`/`operations`) chargée dans
@@ -280,9 +285,9 @@ se règle dans `crawler.yaml` ; les URLs (secrètes) restent dans `local.yaml`. 
 serveur métriques, notifier no-op). L'**ID d'instance** des notifications réutilise le `node_id`
 **existant** de `local.yaml` (aucun nouveau champ) ; repli hostname si absent.
 
-**Verifier** — nouveau **mini-loader YAML** propre au paquet (n'importe pas `emule_indexer`), monté en
-volume comme les YAML du crawler ; expose `log_level` + `metrics: {enabled, port}` ; `AnalysisConfig`
-existant (env) **inchangé**.
+**Verifier** — **mini-loader YAML** propre au paquet (`obs_config.py`, n'importe pas `emule_indexer`),
+monté en volume via `VERIFIER_CONFIG` ; expose **seulement `log_level`** (pas de `metrics.{enabled,port}`
+— `/metrics` est toujours exposé sur le port du service). `AnalysisConfig` existant (env) **inchangé**.
 
 ## 9. Exposition des métriques (E-D9)
 
