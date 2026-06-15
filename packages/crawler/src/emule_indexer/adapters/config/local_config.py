@@ -11,6 +11,15 @@ from dataclasses import dataclass
 from typing import Any
 
 from emule_indexer.adapters.config.crawler_config import ConfigError
+from emule_indexer.domain.observability.policy import Audience
+
+
+@dataclass(frozen=True)
+class NotificationTarget:
+    """Une cible apprise (``local.yaml`` — secret). ``tag`` = l'audience consommatrice (E-D7)."""
+
+    url: str
+    tag: Audience
 
 
 @dataclass(frozen=True)
@@ -36,6 +45,7 @@ class LocalConfig:
     staging_dir: str | None = None
     quarantine_dir: str | None = None
     verifier_url: str | None = None
+    notifications: tuple[NotificationTarget, ...] = ()
 
 
 def _require_mapping(value: Any, what: str) -> dict[str, Any]:
@@ -103,6 +113,22 @@ def parse_local_config(raw: dict[str, Any]) -> LocalConfig:
         staging_dir = _require_str(raw, "staging_dir", "local")
         quarantine_dir = _require_str(raw, "quarantine_dir", "local")
     verifier_url = _require_str(raw, "verifier_url", "local") if "verifier_url" in raw else None
+    notifications: list[NotificationTarget] = []
+    if "observability" in raw:
+        obs_raw = _require_mapping(raw["observability"], "section 'observability'")
+        for index, entry in enumerate(obs_raw.get("notifications", [])):
+            what = f"observability.notifications[{index}]"
+            mapping = _require_mapping(entry, what)
+            tag_raw = _require_str(mapping, "tag", what)
+            try:
+                tag = Audience(tag_raw)
+            except ValueError as error:
+                raise ConfigError(
+                    f"{what}.tag : 'community' ou 'operations' attendu, obtenu {tag_raw!r}"
+                ) from error
+            notifications.append(
+                NotificationTarget(url=_require_str(mapping, "url", what), tag=tag)
+            )
     return LocalConfig(
         amules=tuple(endpoints),
         catalog_db_path=_require_str(raw, "catalog_db_path", "local"),
@@ -112,4 +138,5 @@ def parse_local_config(raw: dict[str, Any]) -> LocalConfig:
         staging_dir=staging_dir,
         quarantine_dir=quarantine_dir,
         verifier_url=verifier_url,
+        notifications=tuple(notifications),
     )

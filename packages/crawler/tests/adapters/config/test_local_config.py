@@ -205,3 +205,32 @@ def test_verifier_url_non_string_is_fatal() -> None:
     raw["verifier_url"] = 1234
     with pytest.raises(ConfigError, match="verifier_url"):
         parse_local_config(raw)
+
+
+from emule_indexer.adapters.config.local_config import NotificationTarget  # noqa: E402
+from emule_indexer.domain.observability.policy import Audience  # noqa: E402
+
+
+def test_notifications_absent_is_empty() -> None:
+    assert parse_local_config(_valid_raw()).notifications == ()
+
+
+def test_notifications_parsed() -> None:
+    raw = _valid_raw()
+    raw["observability"] = {
+        "notifications": [
+            {"url": "discord://a", "tag": "community"},
+            {"url": "discord://b", "tag": "operations"},
+        ]
+    }
+    assert parse_local_config(raw).notifications == (
+        NotificationTarget(url="discord://a", tag=Audience.COMMUNITY),
+        NotificationTarget(url="discord://b", tag=Audience.OPERATIONS),
+    )
+
+
+def test_notifications_bad_tag_rejected() -> None:
+    raw = _valid_raw()
+    raw["observability"] = {"notifications": [{"url": "x", "tag": "nope"}]}
+    with pytest.raises(ConfigError, match="tag"):
+        parse_local_config(raw)

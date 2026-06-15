@@ -53,6 +53,27 @@ class VerifyConfig:
     poll_interval_seconds: float
 
 
+_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
+
+
+@dataclass(frozen=True)
+class MetricsConfig:
+    """Serveur de métriques Prometheus du crawler (E-D9). ``port`` = serveur HTTP dédié."""
+
+    enabled: bool
+    port: int
+
+
+@dataclass(frozen=True)
+class ObservabilityConfig:
+    """Réglages d'observabilité NON secrets (``crawler.yaml``). Les URLs apprise sont dans
+    ``local.yaml`` (E-D2). ``log_level`` pilote le logging global (bootstrap → setLevel)."""
+
+    log_level: str
+    metrics: MetricsConfig | None
+    notification_timeout_seconds: float
+
+
 @dataclass(frozen=True)
 class CrawlerConfig:
     """Politique du crawler (spec §5). Toutes les durées en SECONDES.
@@ -75,6 +96,7 @@ class CrawlerConfig:
     shutdown_deadline_seconds: float
     download: DownloadConfig | None = None
     verify: VerifyConfig | None = None
+    observability: ObservabilityConfig | None = None
 
 
 def _require_mapping(value: Any, what: str) -> dict[str, Any]:
@@ -116,6 +138,38 @@ def _positive_int(mapping: dict[str, Any], key: str, what: str) -> int:
     return value
 
 
+def _bool(mapping: dict[str, Any], key: str, what: str) -> bool:
+    if key not in mapping:
+        raise ConfigError(f"{what} : clé {key!r} manquante")
+    value = mapping[key]
+    if not isinstance(value, bool):
+        raise ConfigError(f"{what}.{key} : booléen attendu, obtenu {value!r}")
+    return value
+
+
+def _parse_observability(raw: dict[str, Any]) -> ObservabilityConfig:
+    log_level = raw.get("log_level", "INFO")
+    if not isinstance(log_level, str) or log_level not in _LOG_LEVELS:
+        raise ConfigError(
+            f"observability.log_level : un de {sorted(_LOG_LEVELS)} attendu, obtenu {log_level!r}"
+        )
+    metrics: MetricsConfig | None = None
+    if "metrics" in raw:
+        metrics_raw = _require_mapping(raw["metrics"], "observability.metrics")
+        metrics = MetricsConfig(
+            enabled=_bool(metrics_raw, "enabled", "observability.metrics"),
+            port=_positive_int(metrics_raw, "port", "observability.metrics"),
+        )
+    timeout = (
+        _positive(raw, "notification_timeout_seconds", "observability")
+        if "notification_timeout_seconds" in raw
+        else 5.0
+    )
+    return ObservabilityConfig(
+        log_level=log_level, metrics=metrics, notification_timeout_seconds=timeout
+    )
+
+
 def parse_crawler_config(raw: dict[str, Any]) -> CrawlerConfig:
     """Construit un ``CrawlerConfig`` validé depuis le dict YAML parsé (fail-fast §5/§14)."""
     backoff_raw = _require_mapping(raw.get("backoff", {}), "section 'backoff'")
@@ -152,6 +206,11 @@ def parse_crawler_config(raw: dict[str, Any]) -> CrawlerConfig:
         verify = VerifyConfig(
             poll_interval_seconds=_positive(verify_raw, "poll_interval_seconds", "verify")
         )
+    observability: ObservabilityConfig | None = None
+    if "observability" in raw:
+        observability = _parse_observability(
+            _require_mapping(raw["observability"], "section 'observability'")
+        )
     return CrawlerConfig(
         cycle_interval_seconds=_positive(raw, "cycle_interval_seconds", "crawler"),
         search_poll_budget_seconds=_positive(raw, "search_poll_budget_seconds", "crawler"),
@@ -163,4 +222,5 @@ def parse_crawler_config(raw: dict[str, Any]) -> CrawlerConfig:
         shutdown_deadline_seconds=_positive(raw, "shutdown_deadline_seconds", "crawler"),
         download=download,
         verify=verify,
+        observability=observability,
     )

@@ -203,3 +203,59 @@ def test_verify_section_must_be_a_mapping() -> None:
     raw["verify"] = [1, 2]
     with pytest.raises(ConfigError, match="section 'verify'"):
         parse_crawler_config(raw)
+
+
+from emule_indexer.adapters.config.crawler_config import (  # noqa: E402
+    MetricsConfig,
+    ObservabilityConfig,
+)
+
+
+def test_observability_absent_defaults_to_none() -> None:
+    config = parse_crawler_config(_valid_raw())
+    assert config.observability is None
+
+
+def test_observability_parsed() -> None:
+    raw = _valid_raw()
+    raw["observability"] = {
+        "log_level": "DEBUG",
+        "metrics": {"enabled": True, "port": 9100},
+        "notification_timeout_seconds": 3.0,
+    }
+    config = parse_crawler_config(raw)
+    assert config.observability == ObservabilityConfig(
+        log_level="DEBUG",
+        metrics=MetricsConfig(enabled=True, port=9100),
+        notification_timeout_seconds=3.0,
+    )
+
+
+def test_observability_metrics_optional() -> None:
+    raw = _valid_raw()
+    raw["observability"] = {"log_level": "INFO"}
+    config = parse_crawler_config(raw)
+    assert config.observability == ObservabilityConfig(
+        log_level="INFO", metrics=None, notification_timeout_seconds=5.0
+    )
+
+
+def test_observability_bad_log_level_rejected() -> None:
+    raw = _valid_raw()
+    raw["observability"] = {"log_level": "LOUD"}
+    with pytest.raises(ConfigError, match="log_level"):
+        parse_crawler_config(raw)
+
+
+def test_observability_metrics_enabled_key_missing_rejected() -> None:
+    raw = _valid_raw()
+    raw["observability"] = {"log_level": "INFO", "metrics": {"port": 9100}}
+    with pytest.raises(ConfigError, match="'enabled' manquante"):
+        parse_crawler_config(raw)
+
+
+def test_observability_metrics_enabled_non_bool_rejected() -> None:
+    raw = _valid_raw()
+    raw["observability"] = {"log_level": "INFO", "metrics": {"enabled": 1, "port": 9100}}
+    with pytest.raises(ConfigError, match="booléen attendu"):
+        parse_crawler_config(raw)
