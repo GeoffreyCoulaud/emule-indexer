@@ -121,18 +121,19 @@ Modules :
   métier seulement). Inclut le champ `first_occurrence` sur les faits edge-triggered (E-D8).
 - **`domain/observability/policy.py`** — `class Severity(Enum)` (`DEBUG/INFO/WARNING/ERROR`),
   `class Audience(Enum)` (`COMMUNITY/OPERATIONS`), `class MetricName(StrEnum)`,
-  `@dataclass(frozen=True) MetricInstruction(name: MetricName, labels, kind: Literal["inc","set","observe"], value: float)`,
-  `@dataclass(frozen=True) Report(severity, message, metric: MetricInstruction | None, audiences: frozenset[Audience])`
-  (`audiences` vide = aucune notif), et `def describe(event: Event) -> Report` — **match exhaustif**
-  (`case _: assert_never(event)`).
+  `@dataclass(frozen=True) MetricInstruction(name: MetricName, kind: Literal["inc","set","observe"], labels, value: float)`,
+  `@dataclass(frozen=True) Report(severity, message, metrics: tuple[MetricInstruction, ...], audiences: frozenset[Audience])`
+  (`metrics` = 0..N — un événement peut alimenter **plusieurs** métriques, ex. `SearchCycleCompleted`
+  = compteur + histogramme ; `audiences` vide = aucune notif), et `def describe(event: Event) -> Report`
+  — **match exhaustif** (`case _: assert_never(event)`).
 - **`ports/telemetry.py`** — `class Telemetry(Protocol): async def emit(self, event: Event) -> None`.
   Ports des sinks : `MetricsSink.apply(MetricInstruction) -> None` (sync),
   `Notifier.notify(audience: Audience, body: str, severity: Severity) -> None` (async). Le **corps**
   = `Report.message` ; le **titre** + le `NotifyType` apprise sont **dérivés de la sévérité/audience
   par l'adapter** (la policy ne rend qu'un seul texte, pas un title/body séparés).
 - **`adapters/observability/dispatcher.py`** — `ObservabilityDispatcher(Telemetry)` : `emit` (async)
-  appelle `describe`, **toujours** logge (`logger.log(_LEVELS[r.severity], r.message)`) et applique la
-  métrique si présente, **puis** pour chaque audience de `r.audiences` :
+  appelle `describe`, **toujours** logge (`logger.log(_LEVELS[r.severity], r.message)`) et applique
+  **chaque** `MetricInstruction` de `r.metrics`, **puis** pour chaque audience de `r.audiences` :
   `await asyncio.wait_for(notifier.notify(...), timeout=T)` dans un `try/except` qui **absorbe
   `TimeoutError` + toute exception** (warning loggé). Un canal mort/lent/qui hang coûte **au pire `T`**
   et ne casse jamais le crawl (E-D13).
