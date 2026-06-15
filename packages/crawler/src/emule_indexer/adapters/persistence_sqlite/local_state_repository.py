@@ -70,6 +70,8 @@ SET status = 'pending', claimed_at = NULL, lease_until = NULL
 WHERE status = 'in_progress' AND lease_until < ?
 """
 
+_COUNT_PENDING = "SELECT COUNT(*) FROM verification_tasks WHERE status = 'pending'"
+
 
 class SqliteLocalStateRepository:
     """Implémentation SQLite du port ``LocalStateRepository`` (satisfaction STRUCTURELLE)."""
@@ -163,3 +165,9 @@ class SqliteLocalStateRepository:
         with wrap_sqlite_errors():
             cursor = self._connection.execute(_RECLAIM, (utc_iso(self._clock()),))
         return cursor.rowcount
+
+    def count_pending_verifications(self) -> int:
+        """Nombre de tâches en attente (jauge d'observabilité — lecture inoffensive)."""
+        with wrap_sqlite_errors():
+            row = self._connection.execute(_COUNT_PENDING).fetchone()
+        return int(row[0])

@@ -331,3 +331,16 @@ def test_repository_satisfies_the_port_structurally(
 ) -> None:
     port: LocalStateRepository = repository  # mypy prouve la satisfaction structurelle
     assert port.claim_verification() is None
+
+
+# --- count_pending_verifications (Plan E.2 — observabilité) --------------------------------
+
+
+def test_count_pending_verifications(repository: SqliteLocalStateRepository) -> None:
+    assert repository.count_pending_verifications() == 0
+    repository.enqueue_verification("a" * 32)
+    repository.enqueue_verification("b" * 32)
+    assert repository.count_pending_verifications() == 2
+    claimed = repository.claim_verification()
+    assert claimed is not None  # une tâche passe en in_progress → plus 'pending'
+    assert repository.count_pending_verifications() == 1

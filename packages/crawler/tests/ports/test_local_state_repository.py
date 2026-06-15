@@ -35,6 +35,9 @@ class _StubRepository:
     def reclaim_expired(self) -> int:
         return 0
 
+    def count_pending_verifications(self) -> int:
+        return 0
+
 
 def test_protocol_is_satisfied_structurally() -> None:
     repository: LocalStateRepository = _StubRepository()  # mypy prouve la satisfaction
@@ -44,3 +47,4 @@ def test_protocol_is_satisfied_structurally() -> None:
     repository.complete_verification(1)
     repository.fail_verification(1)
     assert repository.reclaim_expired() == 0
+    assert repository.count_pending_verifications() == 0
