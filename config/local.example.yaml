@@ -27,3 +27,10 @@ local_db_path: /data/local/local.db        # base opérationnelle (jamais fusion
 # absente = mode observateur (les deux boucles restent OFF). Au démarrage en full, le crawler
 # health-check le verifier et REFUSE de démarrer s'il est injoignable (pas de download sans vérif).
 # verifier_url: http://verifier:8000
+
+# Notifications apprise (E-D7) — secrets, ne JAMAIS versionner les vraies URLs.
+# tag = audience : community (découvertes) / operations (santé/sécurité).
+# observability:
+#   notifications:
+#     - { url: "discord://WEBHOOK_ID/TOKEN", tag: community }
+#     - { url: "discord://WEBHOOK_ID/TOKEN", tag: operations }

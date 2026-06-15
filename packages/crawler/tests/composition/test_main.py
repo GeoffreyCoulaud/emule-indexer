@@ -21,9 +21,14 @@ def _args(**overrides: Path) -> argparse.Namespace:
     return argparse.Namespace(**base)
 
 
-def test_build_app_assembles_a_crawler_app() -> None:
-    # crawler.yaml sans observability → branche obs is None de build_app
-    app = entry.build_app(_args())
+def test_build_app_assembles_a_crawler_app(tmp_path: Path) -> None:
+    # crawler.yaml SANS section observability → couvre la branche `observability is None`
+    # de build_app (le crawler.yaml versionné EN A une désormais ; on la retire ici).
+    full = (_CONFIG / "crawler.yaml").read_text(encoding="utf-8")
+    without_obs = full.split("\nobservability:")[0] + "\n"
+    crawler_yaml = tmp_path / "crawler_no_obs.yaml"
+    crawler_yaml.write_text(without_obs, encoding="utf-8")
+    app = entry.build_app(_args(crawler=crawler_yaml))
     assert isinstance(app, CrawlerApp)
 
 
@@ -31,11 +36,10 @@ def test_build_app_applies_log_level_when_observability_configured(
     tmp_path: Path,
 ) -> None:
     """La branche observability is not None de build_app appelle setLevel."""
-    # Crée un crawler.yaml minimal avec une section observability (log_level=DEBUG).
+    base = (_CONFIG / "crawler.yaml").read_text(encoding="utf-8").split("\nobservability:")[0]
     crawler_yaml = tmp_path / "crawler_obs.yaml"
     crawler_yaml.write_text(
-        ((_CONFIG / "crawler.yaml").read_text(encoding="utf-8"))
-        + "\nobservability:\n  log_level: DEBUG\n  notification_timeout_seconds: 5.0\n",
+        base + "\nobservability:\n  log_level: DEBUG\n  notification_timeout_seconds: 5.0\n",
         encoding="utf-8",
     )
     app = entry.build_app(_args(crawler=crawler_yaml))
