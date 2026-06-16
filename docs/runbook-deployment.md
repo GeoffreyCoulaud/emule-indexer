@@ -309,7 +309,7 @@ documentés ici que pour référence si quelque chose cloche.
   configs et sort en erreur (code ≠ 0) si l'une est invalide, **sans rien démarrer**. À lancer avant
   un déploiement.
 
-Pour valider/tester en profondeur (suites d'intégration, smoke, e2e, CI), voir le
+Pour valider/tester en profondeur (suites d'intégration, smoke, CI), voir le
 [guide des tests](testing-guide.md).
 
 ## Limites connues / follow-ups
@@ -320,5 +320,11 @@ Pour valider/tester en profondeur (suites d'intégration, smoke, e2e, CI), voir 
   ou un user namespace, donc un changement de stratégie de confinement (le ring **container** —
   non-root, `cap_drop`, `read_only`, `internal: true`, gVisor opt-in — est déjà là).
 - **port-sync — validation réelle** : la boucle est construite ; sa validation **bout-en-bout**
-  (port-check High-ID réel derrière le VPN) se fait via la suite e2e et un déploiement réel.
+  (port-check High-ID réel derrière le VPN) se fait via un déploiement réel.
+- **DV10 (download → quarantaine) — validation réelle** : le déplacement atomique vers la quarantaine
+  (`resolve_staging_path`/`os.replace`) est couvert par les unit-tests. La seule inconnue réelle —
+  amuled écrit-il un fichier fini là où on monte `staging_dir` ? — est une **hypothèse de
+  déploiement** (amuled écrit dans son *Incoming* ; montez `staging_dir` = ce dossier), à confirmer
+  au premier vrai téléchargement. *(La suite e2e « transfert réel » qui aurait synthétisé ce
+  transfert a été abandonnée — voir le guide des tests.)*
 - **WebUI / hub central / rétention** : non planifiés à ce stade.

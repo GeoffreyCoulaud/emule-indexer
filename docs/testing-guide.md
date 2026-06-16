@@ -9,6 +9,13 @@ Public visé : opérateur / dev / CI. Tout ce qui suit est **extrait du code ré
 `pyproject.toml`, fichiers compose). Quand un prérequis n'est pas vérifiable dans le code, c'est noté
 « à confirmer ».
 
+> **La suite e2e « transfert réel » a été abandonnée** (et son scaffolding supprimé du dépôt) — voir
+> la note dans le handoff / `CLAUDE.md`. Raison : pour qu'un vrai `amuled` signale un download terminé
+> il faudrait orchestrer/reverse-engineerer des outils tiers (`amuled`, `ed2kd`), ce qui valide surtout
+> du comportement tiers de confiance, pas notre code (même motif que la couche port-forwarding gluetun).
+> DV10 reste couvert par les **unit-tests** + une **hypothèse de déploiement** (`staging_dir` =
+> l'Incoming d'amuled, à confirmer en prod réelle). Ce guide ne couvre donc plus que **6** marqueurs.
+
 ---
 
 ## 1. Vue d'ensemble — la pyramide de tests
@@ -54,12 +61,11 @@ Le projet a **deux niveaux** :
 | `download_integration` | crawler | Mécaniques EC du download (`add_link` → file de download) ↔ amuled réel | **Oui** (testcontainers) | Image `ngosang/amule:3.0.0-1` | `( cd packages/crawler && uv run pytest -m download_integration --no-cov )` |
 | `orchestration_integration` | crawler | Boucle de crawl complète (un cycle + arrêt borné) ↔ amuled réel | **Oui** (testcontainers) | Image `ngosang/amule:3.0.0-1` | `( cd packages/crawler && uv run pytest -m orchestration_integration --no-cov )` |
 | `compose_integration` | crawler | Smoke e2e de la stack docker compose assemblée (sans VPN) — câblage seul | **Oui** (compose v2) | docker compose v2 ; build des 2 images | `( cd packages/crawler && uv run pytest -m compose_integration --no-cov )` |
-| `e2e_integration` | crawler | Download → quarantaine → verify **RÉEL** de bout en bout (octets transférés) | **Oui** (compose v2) | docker compose v2 ; **submodule `submodules/ed2kd` checkouté** (`git submodule update --init --recursive`) ; image ed2kd buildable | `( cd packages/crawler && uv run pytest -m e2e_integration --no-cov )` |
 
-> **À ne pas confondre :** le dossier `packages/crawler/tests/e2e/` (`test_planted.py`, `test_md4.py`,
-> `test_ed2k_stub.py`) ne porte **aucun** marqueur d'intégration — ce sont des tests **unitaires** qui
-> vérifient le binaire planté et le stub eD2k, et qui tournent **dans le gate par défaut**. Le marqueur
-> `e2e_integration` ne concerne **que** `tests/integration/test_e2e.py`.
+> **La suite e2e « transfert réel » a été abandonnée** — voir l'encadré en intro et la note dans le
+> handoff / `CLAUDE.md`. DV10 (`resolve_staging_path`, `os.replace`/promote, boucle download, détection
+> de complétion) reste couvert par les **unit-tests** + une **hypothèse de déploiement** (`staging_dir`
+> = l'Incoming d'amuled).
 
 ---
 
@@ -256,60 +262,21 @@ file`).
 
 ---
 
-### 3.7 `e2e_integration` — download→verify réel (crawler, **Docker + compose v2 requis**)
-
-**Ce que ça prouve.** Contrairement au smoke (câblage seul), cette suite assemble un **vrai serveur
-eD2k** (`ed2kd` vendoré) + un **amuled seeder** qui partage le fichier planté en High-ID + l'amuled
-leecher du crawler. Le crawler observe, décide `download`, télécharge **les octets réels**, et au
-partfile complété déclenche `resolve_staging_path` (DV10, **jamais exercé ailleurs**) → `os.replace`
-vers la quarantaine par hash → le verifier analyse → verdict `clean` + `real_meta` non vide. Un
-sous-test optionnel valide le port-sync (High-ID après SetPort).
-
-**Prérequis exacts.**
-- **Docker** + **docker compose v2** (pilotage par `subprocess`, `cwd = repo root`).
-- **Le submodule `submodules/ed2kd` doit être checkouté.** ed2kd est désormais un **git submodule**
-  (`gureedo/ed2kd`, épinglé sur le commit amont `f6c330da` ; déclaré dans `.gitmodules`). Après un
-  clone, un contributeur fait **`git submodule update --init --recursive`** pour matérialiser
-  `submodules/ed2kd`. Le Dockerfile `tests/e2e/ed2kd/Dockerfile` fait `COPY submodules/ed2kd …`
-  (contexte de build = racine du dépôt) ; sans le checkout du submodule, le dossier est vide et le
-  build de l'image ed2kd échoue.
-- Le binaire planté `tests/e2e/fixtures/planted.mp4` (commité) et sa constante de hash
-  (`7d3ce5e6…`) sont déjà en place et vérifiés par les tests unitaires `tests/e2e/test_planted.py`.
-- Variables gluetun **stubées par le test** (rien à poser côté opérateur).
-- Fichiers compose : `compose.yaml` + `compose.e2e.yaml` ; configs/fixtures sous `tests/e2e/`.
-- Le sous-test port-sync est gardé par `skipif` : il ne tourne **que si `E2E_PORTSYNC=1`** (sinon
-  skip, car la boucle port-sync peut ne pas encore être intégrée).
-
-**Commande.**
-```bash
-( cd packages/crawler && uv run pytest -m e2e_integration --no-cov )
-```
-(Avec port-sync : `E2E_PORTSYNC=1 ( cd packages/crawler && uv run pytest -m e2e_integration --no-cov )`.)
-
-**Attendu.** 3 tests « cœur » passés (build, download→verify réel, décision = download) +
-`test_portsync_highid_after_setport` **skippé** sauf si `E2E_PORTSYNC=1`. Builds + transferts réels :
-prévoir du temps (timeouts internes jusqu'à 1800 s).
-
----
-
 ## 4. Prérequis machine (récapitulatif installable)
 
 Pour pouvoir lancer **toutes** les suites :
 
-- **Docker** + **docker compose v2** (`ec/download/orchestration/compose/e2e_integration`). Les
-  suites EC utilisent `testcontainers` (tire l'image `ngosang/amule:3.0.0-1`) ; les suites compose/e2e
-  pilotent `docker compose` directement.
+- **Docker** + **docker compose v2** (`ec/download/orchestration/compose_integration`). Les
+  suites EC utilisent `testcontainers` (tire l'image `ngosang/amule:3.0.0-1`) ; la suite compose
+  pilote `docker compose` directement.
 - **ffmpeg / ffprobe** (`analysis_integration` — obligatoire pour les tests ffprobe).
 - **clamav** : `clamscan` + une base de signatures (`freshclam` peuple `/var/lib/clamav`, ou pointez
   `CLAMAV_DB_DIR` ailleurs) — **optionnel** ; sans base, les tests clamav sont skippés.
 - **libseccomp + `pyseccomp`** (déjà dans le lock du paquet verifier) + un `no_new_privs` posable —
   **optionnel** ; sinon les tests seccomp sont skippés.
 - Un **`.env`** (copié de `.env.example`) pour les commandes compose **manuelles** : `WIREGUARD_PRIVATE_KEY`,
-  `SERVER_COUNTRIES`, `AMULE_EC_PASSWORD`, et `DOCKER_GID` (uniquement si port-sync). Note : les tests
-  `compose_integration`/`e2e_integration` **stubent eux-mêmes** ces variables, donc le `.env` n'est pas
-  requis pour les lancer.
-- Pour `e2e_integration` uniquement : le **submodule `submodules/ed2kd` checkouté**
-  (`git submodule update --init --recursive`, voir §3.7).
+  `SERVER_COUNTRIES`, `AMULE_EC_PASSWORD`, et `DOCKER_GID` (uniquement si port-sync). Note : le test
+  `compose_integration` **stube lui-même** ces variables, donc le `.env` n'est pas requis pour le lancer.
 
 ---
 
@@ -333,15 +300,13 @@ Pistes par marqueur (faisabilité GitHub Actions) :
 | `analysis_integration` (seccomp) | **Oui, probable** | `libseccomp` est généralement présent sur les runners Ubuntu et `no_new_privs` est posable → le test **tourne** (confirmé : il tourne déjà dans le sandbox de dev). S'il n'est pas faisable sur un runner donné, il se **skippe** (jamais d'échec). |
 | `ec / download / orchestration_integration` | **Oui** | Docker est disponible sur les runners Ubuntu ; `testcontainers` tire `ngosang/amule:3.0.0-1`. Démarrage du conteneur ~ dizaines de secondes. |
 | `compose_integration` | **Oui — déjà fait** | Déjà dans `images.yml` (job `smoke`). |
-| `e2e_integration` | **Faisable** — le submodule fournit la source | ed2kd est un git submodule (`submodules/ed2kd`) : en CI, faire un **checkout récursif des submodules** (`actions/checkout` avec `submodules: recursive`, ou `git submodule update --init --recursive`), puis builder ed2kd + lancer la suite. Le plus coûteux (build C + transferts réels). |
 
 **Ordre d'ajout raisonnable** (du moins coûteux / plus stable au plus lourd) :
 1. `verify_integration` (gratuit, in-process) ;
 2. `analysis_integration` côté ffprobe (apt ffmpeg) ;
 3. les suites EC (`ec` → `download` → `orchestration`) — Docker, déjà disponible ;
 4. `analysis_integration` côté clamav (apt + base, plus lent) ;
-5. `analysis_integration` côté seccomp (après avoir confirmé `no_new_privs` en GHA) ;
-6. `e2e_integration` (checkout récursif du submodule `submodules/ed2kd` en CI).
+5. `analysis_integration` côté seccomp (après avoir confirmé `no_new_privs` en GHA).
 
 ---
 
