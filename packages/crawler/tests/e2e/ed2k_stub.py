@@ -11,7 +11,7 @@ Frontière hexagonale : ce module est un **outil de test** — il n'importe RIEN
 testé via une paire StreamReader/Writer en mémoire. Le ``serve_forever`` réel (bind) est
 ``# pragma: no cover`` (exercé seulement sous Docker, lancé par Geoffrey).
 
-Ancrages (vendor/ed2kd, cités fichier:ligne) : framing ``ed2k_proto.h:36-90`` ; tags
+Ancrages (submodules/ed2kd, cités fichier:ligne) : framing ``ed2k_proto.h:36-90`` ; tags
 ``ed2k_proto.h:163-172`` + ``packet.c:170-193`` (forme longue émise par ed2kd) ; IDCHANGE
 ``packet.c:14-25`` (id = IP en ordre réseau, écrite telle quelle) ; SEARCHRESULT
 ``packet.c:146-228`` ; FOUNDSOURCES ``packet.c:131-144`` ; terme de recherche

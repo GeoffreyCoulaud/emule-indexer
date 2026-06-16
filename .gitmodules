@@ -1,0 +1,3 @@
+[submodule "submodules/ed2kd"]
+	path = submodules/ed2kd
+	url = https://github.com/gureedo/ed2kd.git

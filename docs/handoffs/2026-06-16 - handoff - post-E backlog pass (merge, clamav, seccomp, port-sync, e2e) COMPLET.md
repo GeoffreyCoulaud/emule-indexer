@@ -16,7 +16,7 @@
 | `ce769da` | **5a. clamav** | check par signatures (opt-in `ENABLED_CHECKS`), `clamscan` standalone, rlimits relâchés conditionnellement ; sidecar `freshclam` + volume RO `clamav-db` ; `mem_limit` 2g. |
 | `2d1b481` | **5b. ring seccomp** | `confine.py` : blocklist seccomp-bpf par-enfant (`pyseccomp`), fail-open, sans capability (`no_new_privs` posé par le conteneur). |
 | `d8af87d` | **6. port-sync** | boucle High-ID : EC `SetPort` + restart amuled via `wollomatic/socket-proxy` (surface restart-amuled-only), lecteur gluetun, rate-limit, 3 events ; auth gluetun none + delta compose. |
-| `1004485` | **7. e2e** | couche A (stub eD2k pur + MD4, 100 % branch) ; couche B (`compose.e2e.yaml` + Dockerfile `ed2kd` vendoré, download→verify RÉEL, DV10) ; marqueur `e2e_integration`. |
+| `1004485` | **7. e2e** | couche A (stub eD2k pur + MD4, 100 % branch) ; couche B (`compose.e2e.yaml` + Dockerfile `ed2kd` buildé depuis le submodule `submodules/ed2kd`, download→verify RÉEL, DV10) ; marqueur `e2e_integration`. |
 | `b94fa2c` | **holistique** | **fix** : les 3 métriques port-sync manquaient dans `PrometheusSink._COUNTERS` → `KeyError` qui crashait tout le crawl au 1er sync. Counters ajoutés + test de garde structurel policy→sink. |
 
 Méthodo par tâche : implémenteur frais (TDD) → revue spec + revue code (sous-agents) → corrections → commit. Revue holistique finale sur l'ensemble (a trouvé le bug métriques).
@@ -48,11 +48,11 @@ Méthodo par tâche : implémenteur frais (TDD) → revue spec + revue code (sou
 
 ## 4. Décisions ouvertes (à trancher avec Geoffrey)
 
-- **Matérialisation `vendor/ed2kd`** : le Dockerfile e2e fait `COPY vendor/ed2kd`, or `vendor/` est
-  **gitignoré** (clones de grounding). Pour la repro contributeur externe (objectif e2e §7), il faut
-  committer la source ed2kd : **tarball commité sous `deploy/e2e/`** (recommandé, garde `vendor/`
-  grounding-only) **ou** un-ignore `vendor/ed2kd`. Non tranché (touche la structure du repo). L'e2e
-  fonctionne déjà localement (Geoffrey a `vendor/ed2kd`).
+- **Matérialisation `ed2kd` — TRANCHÉE (git submodule).** ed2kd est désormais un **git submodule**
+  `submodules/ed2kd` (`gureedo/ed2kd`, épinglé sur `f6c330da`, déclaré dans `.gitmodules`) ; le
+  Dockerfile e2e fait `COPY submodules/ed2kd`. Un contributeur externe fait
+  `git submodule update --init --recursive` après le clone, et la repro e2e fonctionne. Le clone de
+  grounding `vendor/ed2kd` (gitignoré) reste pour le grounding mais **n'est plus la source de build**.
 - **Dispatcher & métriques (E-D13)** : `ObservabilityDispatcher` absorbe les pannes de **notif**
   (canal mort) mais **pas** celles de **métrique** (`metrics.apply` hors try/except). Le fix `b94fa2c`
   + le test de garde garantissent qu'aucune métrique émise n'est non-déclarée (donc plus de `KeyError`
@@ -78,7 +78,8 @@ Méthodo par tâche : implémenteur frais (TDD) → revue spec + revue code (sou
   pas par l'implémenteur (interactions topologie smoke/e2e). `freshclam`/`docker-proxy` désactivés en
   smoke/e2e via `profiles: !override [disabled]` ; clamav OFF en smoke via override `ENABLED_CHECKS`.
 - **R3 / lire la source amont** : l'implémenteur e2e a corrigé une **erreur du design** (ed2kd n'a pas
-  de flag `-c` — `optString="vhg"`, conf relative). Toujours ancrer dans `vendor/` quand c'est dispo.
+  de flag `-c` — `optString="vhg"`, conf relative). Toujours ancrer dans la source amont (le submodule
+  `submodules/ed2kd`, ou le clone de grounding `vendor/ed2kd`) quand c'est dispo.
 
 ## 6. Étape suivante recommandée
 

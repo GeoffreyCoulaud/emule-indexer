@@ -11,7 +11,7 @@ eD2k ni VPN ; seul son serveur EC est sollicité) :
 Volumes éphémères : chaque scénario fait `docker compose down -v` dans un finally.
 
 Mécaniques arrêtées EMPIRIQUEMENT (compose v5, Docker 29) :
-  * Les chemins de volumes relatifs des fichiers compose (`./deploy/smoke/...`) sont résolus
+  * Les chemins de volumes relatifs des fichiers compose (`./tests/smoke/...`) sont résolus
     contre le `working_dir` du projet : tous les `subprocess.run` tournent donc `cwd=_REPO_ROOT`.
   * Les DB sont écrites par le crawler (uid 999, ``read_only: true``) dans les VRAIS volumes
     nommés ``catalog-db``/``local-db`` (montés ``/data/catalog`` + ``/data/local``). Le Dockerfile
@@ -60,19 +60,19 @@ _ENV_STUB = {
 # le Dockerfile possède les points de montage en nonroot pour que les volumes vides héritent
 # de 999:999. Les chemins de bind restent relatifs au working_dir du projet.
 _FULL_LOCAL_VOLUMES = [
-    "./deploy/smoke/local.full.yaml:/app/config/local.yaml:ro",
-    "./deploy/smoke/crawler.yaml:/app/config/crawler.yaml:ro",
-    "./deploy/smoke/targets.yaml:/app/config/targets.yaml:ro",
-    "./deploy/smoke/matcher.yaml:/app/config/matcher.yaml:ro",
+    "./tests/smoke/local.full.yaml:/app/config/local.yaml:ro",
+    "./tests/smoke/crawler.yaml:/app/config/crawler.yaml:ro",
+    "./tests/smoke/targets.yaml:/app/config/targets.yaml:ro",
+    "./tests/smoke/matcher.yaml:/app/config/matcher.yaml:ro",
     "quarantine:/data/quarantine",
     "catalog-db:/data/catalog",
     "local-db:/data/local",
 ]
 _OBSERVER_LOCAL_VOLUMES = [
-    "./deploy/smoke/local.observer.yaml:/app/config/local.yaml:ro",
-    "./deploy/smoke/crawler.yaml:/app/config/crawler.yaml:ro",
-    "./deploy/smoke/targets.yaml:/app/config/targets.yaml:ro",
-    "./deploy/smoke/matcher.yaml:/app/config/matcher.yaml:ro",
+    "./tests/smoke/local.observer.yaml:/app/config/local.yaml:ro",
+    "./tests/smoke/crawler.yaml:/app/config/crawler.yaml:ro",
+    "./tests/smoke/targets.yaml:/app/config/targets.yaml:ro",
+    "./tests/smoke/matcher.yaml:/app/config/matcher.yaml:ro",
     "quarantine:/data/quarantine",
     "catalog-db:/data/catalog",
     "local-db:/data/local",

@@ -54,7 +54,7 @@ Le projet a **deux niveaux** :
 | `download_integration` | crawler | Mécaniques EC du download (`add_link` → file de download) ↔ amuled réel | **Oui** (testcontainers) | Image `ngosang/amule:3.0.0-1` | `( cd packages/crawler && uv run pytest -m download_integration --no-cov )` |
 | `orchestration_integration` | crawler | Boucle de crawl complète (un cycle + arrêt borné) ↔ amuled réel | **Oui** (testcontainers) | Image `ngosang/amule:3.0.0-1` | `( cd packages/crawler && uv run pytest -m orchestration_integration --no-cov )` |
 | `compose_integration` | crawler | Smoke e2e de la stack docker compose assemblée (sans VPN) — câblage seul | **Oui** (compose v2) | docker compose v2 ; build des 2 images | `( cd packages/crawler && uv run pytest -m compose_integration --no-cov )` |
-| `e2e_integration` | crawler | Download → quarantaine → verify **RÉEL** de bout en bout (octets transférés) | **Oui** (compose v2) | docker compose v2 ; **`vendor/ed2kd` matérialisé** (gitignoré) ; image ed2kd buildable | `( cd packages/crawler && uv run pytest -m e2e_integration --no-cov )` |
+| `e2e_integration` | crawler | Download → quarantaine → verify **RÉEL** de bout en bout (octets transférés) | **Oui** (compose v2) | docker compose v2 ; **submodule `submodules/ed2kd` checkouté** (`git submodule update --init --recursive`) ; image ed2kd buildable | `( cd packages/crawler && uv run pytest -m e2e_integration --no-cov )` |
 
 > **À ne pas confondre :** le dossier `packages/crawler/tests/e2e/` (`test_planted.py`, `test_md4.py`,
 > `test_ed2k_stub.py`) ne porte **aucun** marqueur d'intégration — ce sont des tests **unitaires** qui
@@ -242,7 +242,7 @@ file`).
 - Les variables gluetun sont **stubées** par le test lui-même (`WIREGUARD_PRIVATE_KEY`,
   `AMULE_EC_PASSWORD`, `SERVER_COUNTRIES`) car compose les interpole au parse même si gluetun est
   désactivé — **rien à poser côté opérateur**.
-- Fichiers compose utilisés : `compose.yaml` + `compose.smoke.yaml` ; configs sous `deploy/smoke/`.
+- Fichiers compose utilisés : `compose.yaml` + `compose.smoke.yaml` ; configs sous `tests/smoke/`.
 - Le test n'importe **aucun** module `emule_indexer` (préserve le 100 % branch du paquet).
 
 **Commande.**
@@ -267,15 +267,16 @@ sous-test optionnel valide le port-sync (High-ID après SetPort).
 
 **Prérequis exacts.**
 - **Docker** + **docker compose v2** (pilotage par `subprocess`, `cwd = repo root`).
-- **`vendor/ed2kd` doit exister.** ⚠️ **`vendor/` est gitignoré** (`/.gitignore: vendor/`) : un
-  contributeur fraîchement cloné **ne l'a pas**. Le Dockerfile `deploy/e2e/ed2kd/Dockerfile` fait
-  `COPY vendor/ed2kd …` (commit amont `f6c330da`) — sans ce dossier, le build de l'image ed2kd
-  échoue. **Décision ouverte** : matérialiser `vendor/ed2kd` (sous-module, script de vendoring, ou
-  désigitignorer) avant de pouvoir lancer cette suite hors de la machine de Geoffrey.
-- Le binaire planté `deploy/e2e/fixtures/planted.mp4` (commité) et sa constante de hash
+- **Le submodule `submodules/ed2kd` doit être checkouté.** ed2kd est désormais un **git submodule**
+  (`gureedo/ed2kd`, épinglé sur le commit amont `f6c330da` ; déclaré dans `.gitmodules`). Après un
+  clone, un contributeur fait **`git submodule update --init --recursive`** pour matérialiser
+  `submodules/ed2kd`. Le Dockerfile `tests/e2e/ed2kd/Dockerfile` fait `COPY submodules/ed2kd …`
+  (contexte de build = racine du dépôt) ; sans le checkout du submodule, le dossier est vide et le
+  build de l'image ed2kd échoue.
+- Le binaire planté `tests/e2e/fixtures/planted.mp4` (commité) et sa constante de hash
   (`7d3ce5e6…`) sont déjà en place et vérifiés par les tests unitaires `tests/e2e/test_planted.py`.
 - Variables gluetun **stubées par le test** (rien à poser côté opérateur).
-- Fichiers compose : `compose.yaml` + `compose.e2e.yaml` ; configs/fixtures sous `deploy/e2e/`.
+- Fichiers compose : `compose.yaml` + `compose.e2e.yaml` ; configs/fixtures sous `tests/e2e/`.
 - Le sous-test port-sync est gardé par `skipif` : il ne tourne **que si `E2E_PORTSYNC=1`** (sinon
   skip, car la boucle port-sync peut ne pas encore être intégrée).
 
@@ -307,7 +308,8 @@ Pour pouvoir lancer **toutes** les suites :
   `SERVER_COUNTRIES`, `AMULE_EC_PASSWORD`, et `DOCKER_GID` (uniquement si port-sync). Note : les tests
   `compose_integration`/`e2e_integration` **stubent eux-mêmes** ces variables, donc le `.env` n'est pas
   requis pour les lancer.
-- Pour `e2e_integration` uniquement : **`vendor/ed2kd` matérialisé** (voir §3.7).
+- Pour `e2e_integration` uniquement : le **submodule `submodules/ed2kd` checkouté**
+  (`git submodule update --init --recursive`, voir §3.7).
 
 ---
 
@@ -331,7 +333,7 @@ Pistes par marqueur (faisabilité GitHub Actions) :
 | `analysis_integration` (seccomp) | **Oui, probable** | `libseccomp` est généralement présent sur les runners Ubuntu et `no_new_privs` est posable → le test **tourne** (confirmé : il tourne déjà dans le sandbox de dev). S'il n'est pas faisable sur un runner donné, il se **skippe** (jamais d'échec). |
 | `ec / download / orchestration_integration` | **Oui** | Docker est disponible sur les runners Ubuntu ; `testcontainers` tire `ngosang/amule:3.0.0-1`. Démarrage du conteneur ~ dizaines de secondes. |
 | `compose_integration` | **Oui — déjà fait** | Déjà dans `images.yml` (job `smoke`). |
-| `e2e_integration` | **Bloqué tant que `vendor/ed2kd` n'est pas matérialisé** | Une fois `vendor/ed2kd` disponible en CI (sous-module / script de vendoring), le job pourrait builder ed2kd + lancer la suite. Le plus coûteux (build C + transferts réels). |
+| `e2e_integration` | **Faisable** — le submodule fournit la source | ed2kd est un git submodule (`submodules/ed2kd`) : en CI, faire un **checkout récursif des submodules** (`actions/checkout` avec `submodules: recursive`, ou `git submodule update --init --recursive`), puis builder ed2kd + lancer la suite. Le plus coûteux (build C + transferts réels). |
 
 **Ordre d'ajout raisonnable** (du moins coûteux / plus stable au plus lourd) :
 1. `verify_integration` (gratuit, in-process) ;
@@ -339,11 +341,23 @@ Pistes par marqueur (faisabilité GitHub Actions) :
 3. les suites EC (`ec` → `download` → `orchestration`) — Docker, déjà disponible ;
 4. `analysis_integration` côté clamav (apt + base, plus lent) ;
 5. `analysis_integration` côté seccomp (après avoir confirmé `no_new_privs` en GHA) ;
-6. `e2e_integration` (après matérialisation de `vendor/ed2kd`).
+6. `e2e_integration` (checkout récursif du submodule `submodules/ed2kd` en CI).
 
 ---
 
-## 6. Voir aussi
+## 6. Outils de diagnostic (mesure, dev)
 
-- [Runbook de déploiement](runbook-deployment.md) — sections « Smoke test local (sans VPN) » et
-  « Tests e2e (Docker, optionnel) » renvoient vers ce guide pour les prérequis détaillés.
+Outils ponctuels destinés au **développeur** (mesure/diagnostic, pas exploitation) :
+
+- **Sonde richesse EC** : `uv run python -m emule_indexer.tools.ec_probe --all-tags …` dumpe **tous**
+  les tags bruts d'un résultat de recherche réel (mappés + non mappés) — sert à mesurer le taux de
+  remplissage des champs exposés par EC. C'est un outil de **diagnostic** : un déploiement n'en a pas
+  besoin (cf. le constat « EC n'expose aucune métadonnée média sur les résultats de recherche »).
+
+---
+
+## 7. Voir aussi
+
+- [Runbook de déploiement](runbook-deployment.md) — pour **déployer et exploiter** un nœud
+  (le runbook renvoie ici pour la validation en profondeur).
+- [Index de la doc](README.md) — aiguillage par audience (opérateur / développeur / historique).

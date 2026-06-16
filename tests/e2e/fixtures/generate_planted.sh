@@ -22,4 +22,4 @@ ffmpeg -nostdin -hide_banner -loglevel error \
     -c:v libx264 -c:a aac -shortest -y "${out}"
 
 echo "écrit : ${out} ($(wc -c < "${out}") octets)"
-echo "recalcule le hash : ( cd packages/crawler && python3 -c \"import sys; sys.path.insert(0,'tests'); from e2e.md4 import ed2k_hash; print(ed2k_hash(open('../../deploy/e2e/fixtures/planted.mp4','rb').read()))\" )"
+echo "recalcule le hash : ( cd packages/crawler && python3 -c \"import sys; sys.path.insert(0,'tests'); from e2e.md4 import ed2k_hash; print(ed2k_hash(open('../../tests/e2e/fixtures/planted.mp4','rb').read()))\" )"

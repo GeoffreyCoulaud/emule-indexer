@@ -299,26 +299,6 @@ documentés ici que pour référence si quelque chose cloche.
 
 ---
 
-## Tests de validation
-
-> Pour le **détail complet** de toutes les suites d'intégration (prérequis exacts, commandes,
-> ce qu'on attend, pistes CI), voir le **[guide des tests](testing-guide.md)**. Les deux sections
-> ci-dessous en sont les entrées les plus utiles à l'exploitant.
-
-### Smoke test local (sans VPN)
-
-Pour valider le câblage de la stack sur votre machine, **sans** monter de VPN :
-
-```bash
-( cd packages/crawler && uv run pytest -m compose_integration --no-cov -q )
-```
-
-Docker requis. Assemble la stack avec amuled directement sur le réseau `ec` (pas de gluetun) et
-vérifie réseaux, volumes, propriété de `/data` et santé des services. Désélectionné du run de tests
-par défaut.
-
----
-
 ## Outils annexes
 
 - **Fusion de catalogues** : `uv run python -m emule_indexer.merge --output catalog-merged.db
@@ -328,17 +308,9 @@ par défaut.
 - **Validation de config** : `uv run python -m emule_indexer validate-config` charge+valide les 4
   configs et sort en erreur (code ≠ 0) si l'une est invalide, **sans rien démarrer**. À lancer avant
   un déploiement.
-- **Sonde richesse EC** : `uv run python -m emule_indexer.tools.ec_probe --all-tags …` dumpe tous
-  les tags bruts d'un résultat de recherche réel (mesure du taux de remplissage).
 
-### Tests e2e (Docker, optionnel)
-
-Au-delà du smoke (câblage), une suite **e2e** exerce un **téléchargement→vérification RÉEL** : un
-serveur eD2k de test (ed2kd, buildé localement) + un amuled seeder partageant un fichier planté →
-le crawler télécharge les octets → quarantaine → le verifier rend `clean`. `( cd packages/crawler &&
-uv run pytest -m e2e_integration --no-cov )` (désélectionné du run par défaut). C'est ce qui dérisque
-la chaîne complète sans VPN ni secret. **Prérequis détaillés** (dont la matérialisation de
-`vendor/ed2kd`) dans le [guide des tests](testing-guide.md).
+Pour valider/tester en profondeur (suites d'intégration, smoke, e2e, CI), voir le
+[guide des tests](testing-guide.md).
 
 ## Limites connues / follow-ups
 

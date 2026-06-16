@@ -1,8 +1,8 @@
 """Constantes du fichier planté de la suite e2e (spec e2e §4) — outil de test SEUL.
 
 Partagées par le stub eD2k (couche A) et les fixtures de la couche B, pour que les deux parlent
-du **même** fichier. Le binaire ``deploy/e2e/fixtures/planted.mp4`` est commité ; le hash est
-calculé UNE FOIS depuis ce binaire (cf. ``deploy/e2e/fixtures/generate_planted.sh``) et figé ici
+du **même** fichier. Le binaire ``tests/e2e/fixtures/planted.mp4`` est commité ; le hash est
+calculé UNE FOIS depuis ce binaire (cf. ``tests/e2e/fixtures/generate_planted.sh``) et figé ici
 en constante (spec e2e §4.2 : ne JAMAIS recalculer depuis une re-génération ffmpeg).
 
 Le test ``test_planted.py`` re-vérifie que la constante correspond bien au binaire commité (et
@@ -27,7 +27,7 @@ PLANTED_TARGET_ID = "S2E062A"
 PLANTED_ED2K_HASH = "7d3ce5e6b6243999b4fed38bb7ae1c05"
 
 # Chemin du binaire planté commité (relatif à la racine du dépôt).
-PLANTED_PATH = Path(__file__).resolve().parents[4] / "deploy" / "e2e" / "fixtures" / "planted.mp4"
+PLANTED_PATH = Path(__file__).resolve().parents[4] / "tests" / "e2e" / "fixtures" / "planted.mp4"
 
 # Taille (octets) du binaire commité — figée pour le lien ed2k de la couche B.
 PLANTED_SIZE = 14345
