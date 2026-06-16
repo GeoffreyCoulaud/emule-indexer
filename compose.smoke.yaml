@@ -1,4 +1,4 @@
-# Override SMOKE (spec packaging §5) : stack assemblee SANS gluetun, sans secrets ProtonVPN.
+# Override SMOKE (spec packaging §5) : stack assemblee SANS gluetun, sans secrets VPN.
 # amuled tourne directement sur le reseau `ec` ; le crawler vise amuled (configs deploy/smoke/).
 # Volumes ephemeres (pas de persistance). Usage :
 #   docker compose -f compose.yaml -f compose.smoke.yaml --profile full up -d --build

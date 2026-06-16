@@ -89,7 +89,8 @@ vs `--package`) figés via **context7** au plan. Images publiées :
 ## 4. `compose.yaml` — topologie prod (profils `observer`/`full`)
 
 Fidèle à MVP §4-5 :
-- **`gluetun`** (`qmcgaw/gluetun`) : VPN ProtonVPN + NAT-PMP + control server ; `cap_add: NET_ADMIN`
+- **`gluetun`** (`qmcgaw/gluetun`) : VPN + NAT-PMP + control server (port forwarding limité à 4
+  providers : ProtonVPN/PIA/PrivateVPN/PerfectPrivacy ; sinon Low-ID / port ouvert) ; `cap_add: NET_ADMIN`
   + `/dev/net/tun` (**seule** exception capabilities) ; secrets via `.env` (gitignored). Expose le port
   EC d'amuled. Profils `observer` + `full`.
 - **`amuled`** (`ngosang/docker-amule`) : **`network_mode: "service:gluetun"`** (partage la netns →
@@ -119,7 +120,7 @@ Chaque service bâti déclare `image: ghcr.io/geoffreycoulaud/emule-indexer/<nam
 réseau `ec` (pas de `network_mode: service:gluetun`) ; le crawler reçoit une **config smoke** pointant
 son hôte EC sur `amuled` (via le `local.yaml` monté par le compose — pas de nouvelle var d'env PROD,
 cf. §4) ; verifier comme en `full`. Pas de persistance (volumes éphémères). → tourne **partout, sans
-secrets ProtonVPN**.
+secrets VPN**.
 
 **Test `compose_integration`** (`packages/crawler/tests/integration/test_compose_smoke.py`, marqueur
 enregistré dans le pyproject crawler + désélectionné par défaut + `--no-cov` ; à côté des autres tests
@@ -172,7 +173,7 @@ Dockerfiles sont déjà construits localement pour le smoke.
 
 ## 8. Runbook (`docs/runbook-deployment.md`)
 
-- Prérequis (Docker + Buildx ; identifiants ProtonVPN). Setup `.env` (ProtonVPN) + `config/local.yaml`
+- Prérequis (Docker + Buildx ; identifiants d'un provider VPN à port forwarding — Proton/PIA/PrivateVPN/PerfectPrivacy — sinon Low-ID). Setup `.env` (secrets VPN) + `config/local.yaml`
   (depuis `local.example.yaml` ; EC + `VERIFIER_URL`).
 - Démarrage : `docker compose --profile observer up` / `--profile full up` ; pull depuis GHCR
   (`docker compose pull`) ou build local (`docker compose build`).

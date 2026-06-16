@@ -12,7 +12,7 @@
 Le port d'écoute eD2k d'amuled **n'est PAS re-bindable à chaud** : le socket est bâti une seule
 fois au boot (`ReinitializeNetwork()`, `vendor/amule/src/amule.cpp:664,873,963-964`). gluetun,
 derrière qui amuled tourne (`network_mode: service:gluetun`), **renégocie périodiquement** un
-port forwardé (ProtonVPN NAT-PMP) ; pour obtenir un **High-ID** (joignable, donc source
+port forwardé (NAT-PMP, sur l'un des 4 providers à port forwarding — Proton/PIA/PrivateVPN/PerfectPrivacy) ; pour obtenir un **High-ID** (joignable, donc source
 contactable), amuled doit écouter **sur ce port forwardé**.
 
 Mécanisme retenu — une **boucle port-sync UNIFIÉE** côté crawler (boot + mid-life, un seul

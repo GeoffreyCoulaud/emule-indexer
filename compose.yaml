@@ -1,6 +1,6 @@
 # Topologie de deploiement emule-indexer (spec packaging §4/§6).
 # Profils : `observer` (gluetun+amuled+crawler, pas de download/verif) ; `full` (+ verifier,
-# auto-download + verification). Secrets ProtonVPN dans .env (gitignore ; voir .env.example).
+# auto-download + verification). Secrets VPN dans .env (gitignore ; voir .env.example).
 # Le mode du crawler vient de config/local.yaml monte (verifier_url present => full).
 # Durcissement niveau conteneur (F-D2) sur les services batis ; gluetun/amuled = exceptions.
 
@@ -13,11 +13,15 @@ services:
     devices:
       - /dev/net/tun:/dev/net/tun
     environment:
+      # Le port forwarding gluetun (High-ID joignable) n'existe QUE pour 4 providers : ProtonVPN,
+      # PIA, PrivateVPN, PerfectPrivacy. Avec tout autre provider, amuled reste en Low-ID (sauf à
+      # ouvrir/rediriger un port soi-meme). Exemple ci-dessous : ProtonVPN (l'un des 4).
       VPN_SERVICE_PROVIDER: protonvpn
       VPN_TYPE: wireguard
       WIREGUARD_PRIVATE_KEY: ${WIREGUARD_PRIVATE_KEY}
       SERVER_COUNTRIES: ${SERVER_COUNTRIES:-}
-      # NAT-PMP/port-forwarding ProtonVPN : le port-sync (High-ID) est un follow-up (F-D3).
+      # NAT-PMP/port-forwarding (l'un des 4 providers supportes) : le port-sync (High-ID) est un
+      # follow-up (F-D3). Tant qu'il n'est pas la, Low-ID est l'etat normal.
       VPN_PORT_FORWARDING: "on"
     networks:
       - ec

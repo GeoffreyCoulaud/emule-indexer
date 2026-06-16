@@ -42,13 +42,36 @@ recherche — elle devra venir d'ailleurs (analyse locale post-download, plan D/
 | `bitrate`                   | —                                             | **NON**  | SOURCE    | idem |
 | `codec`                     | —                                             | **NON**  | SOURCE    | idem |
 | `file_type`                 | —                                             | **NON**  | SOURCE    | `EC_TAG_SEARCH_FILE_TYPE` (0x0705) est un **filtre de requête**, pas une métadonnée de résultat |
+| `container` / `media_type`  | —                                             | **NON**  | SOURCE    | aucun tag conteneur/type-média sur un résultat (distinct de `file_type` : ces notions ne transitent pas non plus par EC ; à dériver post-download) |
+| `EC_TAG_SEARCH_PARENT`      | `EC_TAG_SEARCH_PARENT` (0x0709)               | OUI      | SOURCE    | ECID du parent (résultats groupés) — volatil, jamais à persister ; atterrit dans `raw_meta` |
+| `EC_TAG_KNOWNFILE_RATING`   | `EC_TAG_KNOWNFILE_RATING` (0x040F)            | OUI      | SOURCE    | note utilisateur (UINT8), aMule **3.0.0** uniquement, émise seulement si `file->HasRating()` — sinon absente ; atterrit dans `raw_meta` |
 | `raw_meta` JSON             | tous les tags non mappés                      | OUI      | SOURCE    | capture-all tenu dès la frontière (mapper + `FileObservation.raw_meta`) |
 | `keyword`                   | (posé par le client : provenance)             | OUI      | SOURCE    | présent dans `FileObservation`, injecté par le client |
 | `observed_at`, `node_id`    | (colonnes de persistance, plan A)             | n/a      | n/a       | injectées par l'adapter DB, hors scope EC |
 
 Source pour la liste des tags de résultat : `CEC_SearchFile_Tag`,
-`src/ECSpecialCoreTags.cpp:353-372` (aMule 2.3.3) et version 3.0.0 avec le rating
-(`amule-org/amule@3.0.0`, même fichier). **C'est la liste exhaustive.**
+`src/ECSpecialCoreTags.cpp:359-378` (révision amont relue ci-dessous). **C'est la liste exhaustive.**
+
+> **Révision amont épinglée** : `vendor/amule` @ commit
+> `5938915f10e6f2e011f87df90261feaf606136d6` (`origin/master`, clone greffé). C'est sur cette
+> révision que la liste `CEC_SearchFile_Tag` et les codes de tags (`src/libs/ec/cpp/ECCodes.h`)
+> ont été relus pour ce document.
+
+### Comportement selon le niveau de détail (`EC_DETAIL_UPDATE`)
+
+Le constructeur `CEC_SearchFile_Tag` (`ECSpecialCoreTags.cpp:359-378`) émet **d'abord**
+`EC_TAG_PARTFILE_SOURCE_COUNT` (0x030A), `EC_TAG_PARTFILE_SOURCE_COUNT_XFER` (0x030D) et
+`EC_TAG_PARTFILE_STATUS` (0x0308) ; puis, **si `detail_level == EC_DETAIL_UPDATE`, il `return`
+immédiatement** (`:365-367`). Conséquence : un résultat en niveau `UPDATE` ne porte **que** ces
+trois champs (compteurs de sources + statut) — **pas** de `name`/`size`/`hash`/`parent`/`rating`.
+Ceux-ci ne sont émis qu'en niveau ≥ `EC_DETAIL_FULL` (le défaut des requêtes de résultats, cf.
+`ec-protocol.md` §« Résultats »). Le `SEARCH_PARENT` et le `KNOWNFILE_RATING` restent en plus
+conditionnels (`file->GetParent()` / `file->HasRating()`).
+
+> **Tag de résultat identique eD2k/Kad** : l'arbre de tags d'un résultat de recherche est le même
+> quel que soit le réseau ; la **seule** divergence EC entre eD2k et Kad porte sur la sémantique de
+> `EC_TAG_SEARCH_STATUS` (0x0708, progression — global : 0-100 % ; Kad : `0` puis `0xfffe` à la fin ;
+> local : `0xffff` ; cf. `ec-protocol.md` §« Progression »), pas sur le contenu des résultats.
 
 ---
 

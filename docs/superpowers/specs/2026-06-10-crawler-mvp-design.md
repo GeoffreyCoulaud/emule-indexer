@@ -40,7 +40,7 @@
 
 ```
 ┌───────────────────────── homelab (docker compose) ─────────────────────────┐
-│  gluetun (VPN ProtonVPN + NAT-PMP) ── netns ── amuled (durci, RO, no-share) │
+│  gluetun (VPN + NAT-PMP, cf. §5) ── netns ── amuled (durci, RO, no-share)   │
 │        ▲ port-sync (glueforward étendu) écrit le port (TCP=UDP)             │
 │                                                                             │
 │  crawler (orchestrateur, multi-homed)                                       │
@@ -72,7 +72,7 @@ src/emule_indexer/
 
 - **Moteur = aMule seul** (`amuled` headless + API **EC**), piloté comme une brique d'infra. Adaptateur EC **écrit en Python** (aucune lib existante ; protocole binaire documenté). Image : `ngosang/docker-amule`.
 - Pas de MLDonkey (réseau Overnet mort/incompatible ; serveurs eD2k partagés). Pas de G2/Gnutella. **Pas de seeding.**
-- **High ID** (mode Full) : **gluetun** assure le tunnel ProtonVPN **et le NAT-PMP**, et expose le port forwarded via son **control server API**. **glueforward** (étendu, voir §15.2) lit ce port et l'applique à aMule en **TCP et UDP au même numéro**. amuled partage la pile réseau de gluetun (**killswitch** = pas de fuite si le VPN tombe).
+- **High ID** (mode Full) : **gluetun** assure le tunnel VPN **et le NAT-PMP**, et expose le port forwarded via son **control server API**. Le port forwarding gluetun n'existe QUE pour **4 providers** (ProtonVPN, PIA, PrivateVPN, PerfectPrivacy) ; avec tout autre provider on tourne en **Low-ID** (ou il faut ouvrir/rediriger un port soi-même). **glueforward** (étendu, voir §15.2) lit ce port et l'applique à aMule en **TCP et UDP au même numéro**. amuled partage la pile réseau de gluetun (**killswitch** = pas de fuite si le VPN tombe).
 - **Réseau** :
   - **amuled n'a pas de réseau Docker propre** : `network_mode: service:gluetun` → il partage la stack réseau de gluetun (tout le P2P sort par le VPN). Son **port EC est exposé par le conteneur gluetun**.
   - `ec` (interne) : crawler ↔ `gluetun:<ec_port>` (pilotage d'amuled via EC).

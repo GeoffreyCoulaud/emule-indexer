@@ -1,238 +1,213 @@
 # Runbook de déploiement — emule-indexer
 
-Déploiement `docker compose` de la stack emule-indexer (gluetun + amuled + crawler + verifier).
-Deux profils : **observer** (recherche + catalogage + notification, ne télécharge rien) et **full**
-(observer + auto-download + vérification isolée). Le sujet du catalogue reste **le fichier**, jamais
-la personne.
+Ce guide explique comment **mettre en route** la stack `docker compose` d'emule-indexer sur une
+machine (homelab, serveur). Il vise un public **moyennement technique** : à l'aise avec un terminal
+et Docker, sans connaître le détail interne du projet. Le sujet du catalogue reste **le fichier**,
+jamais la personne.
+
+Deux profils de déploiement :
+
+- **observer** — recherche + catalogage + notifications. Ne télécharge **rien**.
+- **full** — observer + téléchargement automatique + vérification isolée des fichiers reçus.
+
+---
+
+## Glossaire (sigles utilisés ici)
+
+| Terme | Signification |
+|-------|---------------|
+| **VPN** | Tunnel chiffré qui masque l'IP de la machine. Ici assuré par le conteneur **gluetun**. |
+| **eD2k** | Le réseau eDonkey2000 (serveurs centralisés). L'un des deux réseaux que surveille le projet. |
+| **Kad** | Réseau Kademlia (décentralisé, sans serveur). Le second réseau surveillé. |
+| **EC** | *External Connection* — le protocole par lequel le crawler pilote le client aMule (`amuled`). |
+| **Low-ID / High-ID** | Statut de joignabilité sur eD2k. **High-ID** = la machine est joignable depuis l'extérieur (meilleures sources). **Low-ID** = elle ne l'est pas (fonctionne quand même, mais sous-optimal). |
+| **port forwarding** | Redirection d'un port entrant à travers le VPN. Nécessaire pour obtenir un High-ID. |
+| **quarantine** | Dossier isolé où atterrissent les fichiers téléchargés, **avant** vérification. Le verifier le lit en lecture seule, sans jamais ouvrir le réseau. |
+| **GHCR** | GitHub Container Registry — l'endroit où sont publiées les images Docker du projet. |
 
 ---
 
 ## Prérequis
 
-- **Docker** + **Buildx** + **docker compose v2** (`docker compose version`).
-- Identifiants **ProtonVPN** : une clé privée **WireGuard** (obtenue depuis le portail ProtonVPN,
-  section WireGuard).
-- **`/dev/net/tun`** disponible sur l'hôte (gluetun monte le tunnel WireGuard ; le device est
-  exigé par le conteneur gluetun).
-- (Opt-in) **gVisor** (`runsc`) installé et enregistré comme runtime Docker si vous voulez le
-  durcissement noyau de `compose.hardening.yml`. Sans gVisor, ne pas charger ce fichier (la base
-  est déjà durcie au niveau conteneur).
+- **Docker** + **docker compose v2** (vérifier : `docker compose version`).
+- Un compte chez un **fournisseur VPN WireGuard** (voir l'encadré ci-dessous), d'où vous tirez une
+  **clé privée WireGuard**.
+- Le device **`/dev/net/tun`** disponible sur l'hôte (gluetun en a besoin pour monter le tunnel).
+- *(Optionnel)* le runtime **gVisor** (`runsc`) si vous voulez le durcissement noyau supplémentaire
+  de `compose.hardening.yml`. Sans gVisor, n'utilisez simplement pas ce fichier : la base est déjà
+  durcie.
+
+> ### Quel fournisseur VPN ? (Low-ID vs High-ID)
+> Le projet **n'exige aucun fournisseur précis**. N'importe quel VPN WireGuard supporté par gluetun
+> fait tourner la stack. **Mais** : pour obtenir un **High-ID** (machine joignable, meilleures
+> sources), il faut le **port forwarding**, que gluetun n'implémente que pour **4 fournisseurs** :
+> **ProtonVPN, PIA, PrivateVPN, PerfectPrivacy**.
+>
+> - Avec l'un de ces 4 → port forwarding possible (le High-ID arrivera avec le port-sync, cf.
+>   « Limites connues »).
+> - Avec tout autre fournisseur → la stack tourne en **Low-ID** (état normal, pas une erreur), à
+>   moins d'ouvrir/rediriger un port vous-même.
+>
+> Le fournisseur se choisit dans `compose.yaml` (variable `VPN_SERVICE_PROVIDER`) ; les secrets
+> vont dans `.env` (voir Setup).
 
 ---
 
-## Construction des images (incantation uv workspace résolue)
+## Démarrage rapide (étapes)
 
-Le dépôt est un **workspace uv virtuel** : un seul `uv.lock` racine, un `pyproject.toml` racine, et
-deux membres (`packages/crawler`, dist `emule-indexer` ; `packages/verifier`, dist
-`download-verifier`). Chaque image se construit en **deux couches** pour maximiser le cache Docker :
+### 1. Récupérer le dépôt et préparer les secrets
 
-1. **Couche dépendances** (avant de copier le code) — bind-mount de `uv.lock`, du `pyproject.toml`
-   racine **et des DEUX `pyproject.toml` membres**, puis :
+```bash
+cp .env.example .env
+```
 
-   ```dockerfile
-   uv sync --locked --no-install-workspace --package <dist>
-   ```
+Renseignez dans `.env` :
 
-2. **Couche projet** (après `COPY . /app`) :
+- `WIREGUARD_PRIVATE_KEY` — la clé privée WireGuard de votre fournisseur VPN.
+- `SERVER_COUNTRIES` — le pays de sortie souhaité (ex. `Switzerland`).
+- `AMULE_EC_PASSWORD` — un mot de passe que **vous** choisissez ; il protège le canal EC entre le
+  crawler et amuled.
 
-   ```dockerfile
-   uv sync --locked --no-editable --package <dist>
-   ```
+Le `.env` est **gitignoré** : il ne sera jamais committé.
 
-Où `<dist>` vaut `download-verifier` (verifier) ou `emule-indexer` (crawler). Notes empiriques
-(validées tel quel, sans ajustement) :
+> Si votre fournisseur n'est pas ProtonVPN, ajustez aussi `VPN_SERVICE_PROVIDER` dans `compose.yaml`
+> et, selon le fournisseur, les variables WireGuard correspondantes attendues par gluetun.
 
-- `--locked` (PAS `--frozen`) ; `--package` fonctionne **sans** `--all-packages`.
-- L'incantation a marché **verbatim** depuis le squelette du workspace, aucune adaptation.
+### 2. Configurer le crawler
 
-**Libs système :**
+```bash
+cp config/local.example.yaml config/local.yaml
+```
 
-- **verifier** : il faut **uniquement** `ffmpeg` (qui fournit `ffprobe`, requis par l'analyse
-  D-analysis). Aucune autre lib apt.
-- **crawler** : **zéro** lib apt. `google-re2` (importé `re2`) et `rapidfuzz` s'importent
-  proprement sur `python:3.12-slim-bookworm` — leurs wheels manylinux embarquent le code natif, et
-  `libstdc++6` est déjà présent dans l'image slim.
+Renseignez dans `config/local.yaml` :
 
-Les deux images : runtime `python:3.12-slim-bookworm`, **non-root** (uid/gid 999), entrypoint
-exec-form `["python","-m","<pkg>"]`.
+- `amules[].host: gluetun`, `amules[].port: 4712`, `amules[].password:` = la valeur de
+  `AMULE_EC_PASSWORD`.
+  *(L'hôte EC est `gluetun`, et non `amuled`, parce qu'amuled partage le réseau de gluetun.)*
+- `catalog_db_path: /data/catalog/catalog.db` et `local_db_path: /data/local/local.db`.
+- **Mode full uniquement** : décommentez le bloc `download_endpoint`, mettez `staging_dir:
+  /data/quarantine` + `quarantine_dir: /data/quarantine`, et `verifier_url: http://verifier:8000`.
+  *(C'est la présence de `verifier_url` qui bascule le crawler en mode full.)*
 
-**Build local de toute la stack :**
+### 3. Récupérer (ou construire) les images
+
+Tirer depuis GHCR (recommandé) :
+
+```bash
+docker compose --profile full pull   # --profile requis : tous les services sont profilés
+```
+
+Ou construire localement :
 
 ```bash
 docker compose --profile full build
 ```
 
----
+> **Images privées ?** Les packages GHCR sont privés par défaut. Soit vous les rendez publics dans
+> les settings GitHub du package, soit vous vous authentifiez avant le pull :
+> `docker login ghcr.io -u <user>` (avec un PAT ayant le scope `read:packages`).
+>
+> Références d'images : `ghcr.io/geoffreycoulaud/emule-indexer-crawler` et
+> `ghcr.io/geoffreycoulaud/emule-indexer-verifier`.
 
-## Propriété des volumes `/data` (non-root + read_only)
+### 4. Démarrer
 
-Le crawler tourne en `user: 999` avec `read_only: true` sur le rootfs. Docker crée les **volumes
-nommés vides** en **propriété root** : sans intervention, le crawler (uid 999) ne pouvait pas créer
-ses bases SQLite et échouait avec `unable to open database file` (défaut réel rencontré puis
-corrigé).
-
-**Correctif appliqué dans `packages/crawler/Dockerfile`** : l'image **pré-crée**
-`/data/{catalog,local,quarantine}` en propriété `nonroot:nonroot`. Quand un volume nommé **vide** se
-monte pour la première fois sur l'un de ces points, il **hérite** de la propriété 999. Vérifié
-empiriquement ; le smoke utilise désormais de **vrais volumes nommés** (donc ce chemin est couvert).
-
-> ⚠️ **Volumes pré-existants** : si vous montez un volume nommé **déjà peuplé** (donc déjà
-> root-owned, l'astuce d'héritage ne joue qu'au premier montage d'un volume vide), il faut le
-> `chown` manuellement :
-> ```bash
-> docker run --rm -v emule-indexer_catalog-db:/d alpine chown -R 999:999 /d
-> ```
-> (idem pour `local-db` et `quarantine`).
-
----
-
-## User amuled
-
-`amuled` est une image **tierce** (`ngosang/amule:3.0.0-1`) lancée avec **son propre user** : nous
-ne durcissons **pas** ce que nous ne construisons pas (pas de `read_only`/`user:` imposés au smoke,
-aucune relaxation nécessaire).
-
-> **Note quarantaine (croisement d'uid à surveiller en prod)** : le volume `quarantine` est écrit à
-> la fois par **amuled** (fichiers complétés) et par le **crawler** (`os.replace` atomique). Le
-> premier conteneur qui monte le volume **vide** fixe sa propriété — un éventuel accroc cross-uid à
-> surveiller au vrai déploiement. Non encore exercé (pas de vrai téléchargement dans le smoke).
-
----
-
-## Astuce diagnostic (entrypoint exec-form)
-
-Les deux images ont un **entrypoint exec-form** `["python","-m","<pkg>"]`. Un `docker run IMAGE
-python -c "..."` **n'override pas** l'entrypoint : il y **ajoute** ses arguments. Pour lancer une
-commande ponctuelle dans une image, passer par `--entrypoint` :
+Observer (pas de téléchargement) :
 
 ```bash
-docker run --rm --entrypoint python <image> -c "import re2, rapidfuzz; print('ok')"
+docker compose --profile observer up -d
 ```
 
-(`docker compose exec` et le `CMD` du healthcheck ne traversent PAS l'entrypoint — ils ne sont pas
-affectés.)
+Full (avec téléchargement + vérification) :
+
+```bash
+docker compose --profile full up -d
+```
+
+> En full, le crawler **vérifie que le verifier répond** au démarrage et **refuse de démarrer** s'il
+> est injoignable (pas de téléchargement sans vérification). Si le verifier n'est pas encore prêt, le
+> crawler s'arrête et son `restart: unless-stopped` le relance jusqu'à ce que le verifier soit sain.
+> Pour éviter ces redémarrages, démarrez le verifier d'abord :
+> ```bash
+> docker compose --profile full up -d verifier
+> docker compose --profile full up -d
+> ```
+
+### 5. Vérifier que ça tourne
+
+```bash
+docker compose logs -f crawler                  # suivre les logs du crawler
+docker compose exec crawler ls /data            # /data/catalog, /data/local, /data/quarantine
+```
+
+Vous devriez voir le cycle s'enchaîner sur le vrai réseau eMule : recherche → (en full)
+téléchargement → quarantaine → vérification.
 
 ---
 
-## Setup
+## Premier démarrage : amorçage automatique du réseau
 
-1. **Secrets** :
-   ```bash
-   cp .env.example .env
-   ```
-   Renseigner dans `.env` : `WIREGUARD_PRIVATE_KEY` (clé WireGuard ProtonVPN), `SERVER_COUNTRIES`
-   (ex. `Switzerland`) et `AMULE_EC_PASSWORD` (mot de passe EC). Le `.env` est **gitignoré**.
+Au **tout premier run**, amuled doit récupérer une liste de serveurs eD2k (`server.met`) et une liste
+de nœuds Kad (`nodes.dat`) pour pouvoir se connecter. **Bonne nouvelle : c'est automatique.**
 
-2. **Config locale** :
-   ```bash
-   cp config/local.example.yaml config/local.yaml
-   ```
-   Renseigner dans `config/local.yaml` :
-   - `amules[].host: gluetun`, `amules[].port: 4712`, `amules[].password:` = la valeur de
-     `AMULE_EC_PASSWORD` (l'hôte EC est le conteneur **gluetun** car amuled tourne en
-     `network_mode: service:gluetun`).
-   - `catalog_db_path: /data/catalog/catalog.db` et `local_db_path: /data/local/local.db` (chemins
-     cohérents avec les volumes nommés `catalog-db` @ `/data/catalog` et `local-db` @ `/data/local`).
-   - **Mode full uniquement** : décommenter le bloc `download_endpoint`, renseigner `staging_dir:
-     /data/quarantine` + `quarantine_dir: /data/quarantine` (un **unique** volume `quarantine`
-     partagé, staging et quarantaine sur le même FS), et `verifier_url: http://verifier:8000`.
+- L'image **`ngosang/amule:3.0.0-1`** télécharge silencieusement `server.met` et `nodes.dat` au
+  premier démarrage. C'est un comportement amorcé par un correctif amont d'aMule **3.0.0** ; sa
+  configuration générée pointe `Ed2kServersUrl` et `KadNodesUrl` vers `https://upd.emule-security.org`
+  (et active `ConnectToKad=1`).
+- **⚠️ Cet amorçage dépend de l'egress au boot.** amuled doit pouvoir, dès le démarrage, faire du
+  **DNS** et du **HTTPS sortant (443)** *à travers le VPN*. Si le VPN n'est pas encore monté, ou si
+  l'egress est bloqué au moment du premier run, **rien ne s'amorce** et amuled reste sans serveurs ni
+  nœuds. En cas de souci de connexion, vérifiez d'abord que gluetun est bien `up` et que la sortie
+  Internet fonctionne avant amuled.
 
----
+### Dépendance au pin de version d'amuled (ne pas dériver)
 
-## Démarrage
+`compose.yaml` épingle **`ngosang/amule:3.0.0-1`** — c'est **volontaire et important**.
 
-- **Observer** (gluetun + amuled + crawler ; pas de download ni de vérif) :
-  ```bash
-  docker compose --profile observer up -d
-  ```
-
-- **Full** (+ verifier) :
-  ```bash
-  docker compose --profile full up -d
-  ```
-  > ⚠️ En full, le crawler **health-gate le verifier** au démarrage et **refuse de démarrer** s'il
-  > est injoignable (pas de download sans vérif). Comme `compose.yaml` ne pose **pas** de
-  > `depends_on: verifier`, si le verifier n'est pas encore prêt le crawler fail-fast — son
-  > `restart: unless-stopped` le relance jusqu'à ce que le verifier soit sain (acceptable en
-  > long-running). Pour éviter les redémarrages, démarrer le verifier d'abord :
-  > ```bash
-  > docker compose --profile full up -d verifier
-  > docker compose --profile full up -d
-  > ```
-
-- **Homelab (pull depuis GHCR)** :
-  ```bash
-  docker compose --profile full pull   # `--profile` requis : tous les services sont profilés (un `pull` nu ne tire rien)
-  docker compose --profile full up -d
-  ```
-  **Build local** plutôt que pull : `docker compose --profile full build`.
+- **Ne jamais** remplacer par `latest` ni par une variante `2.3.3-*`.
+- **Seules les versions ≥ 3.0.0** réalisent l'auto-amorçage de `server.met`/`nodes.dat` décrit
+  ci-dessus (le correctif amont est arrivé en aMule 3.0.0).
+- Dériver vers une image plus ancienne casse l'amorçage du premier run, sans message d'erreur
+  évident.
 
 ---
 
-## Durcissement opt-in (gVisor)
+## High-ID, Low-ID : à quoi s'attendre
+
+Tant que la **synchronisation de port** (port-sync) n'est pas en place, la stack tourne en
+**Low-ID**. C'est **l'état normal attendu aujourd'hui, pas une panne** :
+
+- En Low-ID, la recherche, le catalogage et le téléchargement **fonctionnent**.
+- La joignabilité reste sous-optimale (moins de sources directes). Le High-ID arrivera avec le
+  follow-up port-sync (cf. « Limites connues »).
+
+Ne traitez donc pas un statut « Low-ID » dans les logs comme une erreur à corriger.
+
+---
+
+## Durcissement optionnel (gVisor)
 
 ```bash
 docker compose -f compose.yaml -f compose.hardening.yml --profile full up -d
 ```
 
-Exige le runtime gVisor `runsc` enregistré sur l'hôte. **Sinon, ne pas charger ce fichier** : la
-base est déjà durcie au niveau conteneur — non-root (999), `cap_drop: ALL`,
-`no-new-privileges:true`, `read_only: true`, et le réseau `verify-internal` en `internal: true`
-(le verifier n'a pas d'egress).
+Nécessite le runtime gVisor `runsc` enregistré sur l'hôte. **Sinon, ne chargez pas ce fichier** : la
+base est déjà durcie (non-root, capabilities retirées, rootfs en lecture seule, et le verifier sans
+aucune sortie Internet).
 
 ---
 
-## Visibilité GHCR
+## Métriques Prometheus (optionnel)
 
-Les packages GHCR sont **privés par défaut**. Deux options :
+Le crawler et le verifier exposent des métriques Prometheus.
 
-- Les rendre **publics** dans les settings du package GitHub ; OU
-- S'authentifier avant le pull :
-  ```bash
-  docker login ghcr.io -u <user>   # PAT avec scope read:packages
-  docker compose --profile full pull   # `--profile` requis : tous les services sont profilés (un `pull` nu ne tire rien)
-  ```
+- **crawler** — sur un port HTTP dédié (`observability.metrics.port` dans `config/crawler.yaml`),
+  accessible depuis le réseau `ec`.
+- **verifier** — sur son port de service (par défaut `8000`), route `/metrics`. Comme le verifier est
+  sur un réseau **sans sortie Internet**, un Prometheus externe doit **rejoindre ce réseau** (ou vous
+  exposez le port sur l'hôte).
 
-Références d'images (lowercase) :
-
-- `ghcr.io/geoffreycoulaud/emule-indexer-crawler`
-- `ghcr.io/geoffreycoulaud/emule-indexer-verifier`
-
----
-
-## Validation homelab (manuelle)
-
-1. Monter la stack en **full** : `docker compose --profile full up -d`.
-2. Suivre les logs : `docker compose logs -f crawler`.
-3. Confirmer le cycle complet sur le **vrai** réseau eMule : recherche → download → quarantaine →
-   vérification.
-
-> **Low-ID pour l'instant** : le High-ID attend le follow-up de **synchronisation de port**
-> (glueforward abandonné — voir Limites connues). En Low-ID la connectivité fonctionne mais reste
-> sous-optimale.
-
-**Où vivent les données (volumes nommés) :**
-
-```bash
-docker volume inspect emule-indexer_quarantine
-docker compose exec crawler ls /data            # /data/catalog, /data/local, /data/quarantine
-docker compose exec verifier ls /quarantine     # inspecter la quarantaine côté verifier
-```
-
----
-
-## Métriques Prometheus (scrape)
-
-Le crawler expose ses métriques Prometheus sur un port HTTP dédié (`observability.metrics.port`,
-configurable dans `config/crawler.yaml`). Le verifier expose les siennes sur son port de service
-(par défaut `8000`) via la route `/metrics`.
-
-Pour scraper depuis un Prometheus externe :
-- Le **crawler** est accessible depuis le réseau `ec` (et potentiellement `egress`).
-- Le **verifier** est sur le réseau `verify-internal` (`internal: true` — pas d'egress) ; un
-  Prometheus doit **rejoindre ce réseau** pour le scraper, ou exposer le port sur l'hôte.
-
-Le serveur Prometheus reste hors du repo. Exemple de cible `scrape_config` :
+Exemple de `scrape_config` :
 
 ```yaml
 scrape_configs:
@@ -246,25 +221,55 @@ scrape_configs:
 
 ---
 
-## Smoke local
+## Ce qu'on peut ignorer (détails internes non nécessaires au déploiement)
+
+Ces points sont vrais mais **n'exigent aucune action** pour un déploiement normal. Ils ne sont
+documentés ici que pour référence si quelque chose cloche.
+
+- **Construction des images en deux couches uv.** Le dépôt est un *workspace uv* (un seul `uv.lock`,
+  deux paquets). Les Dockerfiles construisent en deux étapes (dépendances, puis code) pour le cache.
+  Vous n'avez rien à faire : `docker compose build` s'en occupe.
+- **Libs système.** Le verifier embarque `ffmpeg` (pour `ffprobe`) ; le crawler n'a aucune lib apt
+  supplémentaire. Déjà géré dans les images.
+- **Propriété des volumes `/data`.** Le crawler tourne en `user: 999` avec un rootfs en lecture
+  seule. Les images **pré-créent** `/data/{catalog,local,quarantine}` en `nonroot` pour qu'un volume
+  nommé **vide** hérite de la bonne propriété au premier montage. *À surveiller seulement* si vous
+  montez un volume **déjà peuplé** (donc root-owned) : il faudrait alors le `chown` manuellement :
+  ```bash
+  docker run --rm -v emule-indexer_catalog-db:/d alpine chown -R 999:999 /d
+  ```
+- **User d'amuled.** `amuled` est une image **tierce** lancée avec **son propre user** ; on ne lui
+  impose pas notre durcissement. Le volume `quarantine` est écrit à la fois par amuled (fichiers
+  finis) et par le crawler (déplacement atomique) — un éventuel accroc de droits cross-user serait à
+  surveiller au tout premier vrai téléchargement.
+- **Entrypoint exec-form.** Les images ont un entrypoint `["python","-m","<pkg>"]`. Pour lancer une
+  commande ponctuelle dans une image, passez par `--entrypoint` :
+  ```bash
+  docker run --rm --entrypoint python <image> -c "import re2, rapidfuzz; print('ok')"
+  ```
+
+---
+
+## Smoke test local (sans VPN)
+
+Pour valider le câblage de la stack sur votre machine, **sans** monter de VPN :
 
 ```bash
 ( cd packages/crawler && uv run pytest -m compose_integration --no-cov -q )
 ```
 
-Docker requis. Monte la stack **sans VPN** (amuled sur le réseau `ec`) et asserte le câblage
-(réseaux, volumes, propriété 999 de `/data`, santé des services). Désélectionné du run par défaut,
-exclu de la couverture.
+Docker requis. Assemble la stack avec amuled directement sur le réseau `ec` (pas de gluetun) et
+vérifie réseaux, volumes, propriété de `/data` et santé des services. Désélectionné du run de tests
+par défaut.
 
 ---
 
 ## Limites connues / follow-ups
 
-- **Synchronisation de port / High-ID** : remplace glueforward (abandonné) ; tant qu'il n'est pas
-  là, on tourne en **Low-ID**.
-- **clamav** : seconde source `malicious` (signatures) — **après Plan F** ; `freshclam` exige un
-  egress, en tension avec le `internal: true` du verifier (un slot de registre est réservé,
-  non implémenté).
-- **Ring noyau bwrap par-enfant** : isolation namespace `net=none` / seccomp / RO mounts /
-  tmpfs réel par enfant d'analyse — **changement de code, hors Plan F**.
-- **Sous-commandes CLI** : ergonomie d'exploitation (à venir).
+- **Synchronisation de port / High-ID** : remplacera l'ancien glueforward (abandonné). Tant qu'il
+  n'est pas là, la stack tourne en **Low-ID** (état normal — voir plus haut).
+- **clamav** : seconde source de détection `malicious` (signatures), à venir après le packaging ;
+  `freshclam` exige une sortie Internet, en tension avec l'isolement réseau du verifier.
+- **Ring noyau par enfant d'analyse** : isolation renforcée (namespace `net=none`, seccomp, montages
+  RO) du sous-processus de vérification — changement de code, à venir.
+- **Sous-commandes CLI** : ergonomie d'exploitation, à venir.
