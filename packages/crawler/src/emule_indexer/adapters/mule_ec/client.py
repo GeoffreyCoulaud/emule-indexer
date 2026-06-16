@@ -12,6 +12,7 @@ from emule_indexer.adapters.mule_ec import codes
 from emule_indexer.adapters.mule_ec.codec import (
     EcPacket,
     EcTag,
+    empty_tag,
     hash16_tag,
     string_tag,
     uint_tag,
@@ -167,6 +168,51 @@ class AmuleEcClient:
         if connstate is None:
             raise EcProtocolError("réponse GET_CONNSTATE sans EC_TAG_CONNSTATE")
         return _parse_connstate(connstate)
+
+    async def get_listen_port(self) -> int:
+        """Port d'écoute TCP eD2k courant d'amuled (port-sync High-ID, design §2.3/§4.2).
+
+        Émet ``EC_OP_GET_PREFERENCES`` + le sélecteur ``EC_TAG_SELECT_PREFS=EC_PREFS_CONNECTIONS``.
+        PIÈGE R3 (figé) : la RÉPONSE porte l'opcode ``EC_OP_SET_PREFERENCES`` (0x40), PAS 0x3F
+        (``CEC_Prefs_Packet`` réutilisé en réponse, ECSpecialMuleTags.cpp:83) → ``expected=0x40``.
+        Lit l'enfant ``EC_TAG_CONN_TCP_PORT`` sous le parent ``EC_TAG_PREFS_CONNECTIONS`` ; parent
+        ou enfant absent → ``EcProtocolError`` (réponse non conforme, captée par la boucle comme
+        « EC indisponible » → backoff). NE LIT JAMAIS d'octet de fichier.
+        """
+        request = EcPacket(
+            codes.EC_OP_GET_PREFERENCES,
+            (uint_tag(codes.EC_TAG_SELECT_PREFS, codes.EC_PREFS_CONNECTIONS),),
+        )
+        reply = await self._request(request, codes.EC_OP_SET_PREFERENCES)
+        connections = reply.find(codes.EC_TAG_PREFS_CONNECTIONS)
+        if connections is None:
+            raise EcProtocolError("réponse GET_PREFERENCES sans EC_TAG_PREFS_CONNECTIONS")
+        tcp_port = connections.find(codes.EC_TAG_CONN_TCP_PORT)
+        if tcp_port is None:
+            raise EcProtocolError("EC_TAG_PREFS_CONNECTIONS sans EC_TAG_CONN_TCP_PORT")
+        return tcp_port.int_value()
+
+    async def set_listen_port(self, port: int) -> None:
+        """Met à jour le port d'écoute TCP/UDP d'amuled EN MÉMOIRE (port-sync, design §4.2).
+
+        Émet ``EC_OP_SET_PREFERENCES`` portant le parent ``EC_TAG_PREFS_CONNECTIONS`` avec deux
+        enfants ``EC_TAG_CONN_TCP_PORT``/``EC_TAG_CONN_UDP_PORT`` = ``port``. Le succès est signalé
+        par ``EC_OP_NOOP`` (handler ExternalConn.cpp:2096). amuled persiste la pref (``Save()``
+        appelé dès l'``Apply()``) ; un restart du conteneur la fait re-bind. NE re-bind PAS à chaud.
+        """
+        request = EcPacket(
+            codes.EC_OP_SET_PREFERENCES,
+            (
+                empty_tag(
+                    codes.EC_TAG_PREFS_CONNECTIONS,
+                    (
+                        uint_tag(codes.EC_TAG_CONN_TCP_PORT, port),
+                        uint_tag(codes.EC_TAG_CONN_UDP_PORT, port),
+                    ),
+                ),
+            ),
+        )
+        await self._request(request, codes.EC_OP_NOOP)
 
     async def add_link(self, ed2k_link: str) -> None:
         """Ajoute un lien ed2k à la file de download d'amuled (réf. EC, DÉCISION D1).

@@ -209,6 +209,40 @@ CASES: list[tuple[ev.Event, Report]] = [
             _BOTH,
         ),
     ),
+    (
+        ev.PortSyncTriggered(old=4662, new=51820),
+        Report(
+            Severity.INFO,
+            "port-sync : 4662 → 51820 (restart amuled)",
+            (MetricInstruction(MetricName.PORT_SYNC_TRIGGERED, "inc"),),
+        ),
+    ),
+    (
+        ev.HighIdRecovered(port=51820),
+        Report(
+            Severity.INFO,
+            "High-ID retrouvé sur le port 51820",
+            (MetricInstruction(MetricName.HIGH_ID_RECOVERED, "inc"),),
+            _COMMUNITY,
+        ),
+    ),
+    (
+        ev.PortMismatchUnresolved(first_occurrence=True, live=51820, configured=4662),
+        Report(
+            Severity.WARNING,
+            "High-ID non rétabli (port forwardé 51820, port amuled 4662)",
+            (MetricInstruction(MetricName.PORT_MISMATCH, "inc"),),
+            _OPERATIONS,
+        ),
+    ),
+    (
+        ev.PortMismatchUnresolved(first_occurrence=False, live=51820, configured=4662),
+        Report(
+            Severity.WARNING,
+            "High-ID non rétabli (port forwardé 51820, port amuled 4662)",
+            (MetricInstruction(MetricName.PORT_MISMATCH, "inc"),),
+        ),
+    ),
 ]
 
 

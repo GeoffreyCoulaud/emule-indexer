@@ -28,6 +28,15 @@ local_db_path: /data/local/local.db        # base opérationnelle (jamais fusion
 # health-check le verifier et REFUSE de démarrer s'il est injoignable (pas de download sans vérif).
 # verifier_url: http://verifier:8000
 
+# Port-sync (High-ID) — INDÉPENDANT du mode observer/full. La boucle n'est ARMÉE que si CES DEUX
+# URLs ET la section crawler.port_sync sont TOUTES présentes (les 3 réglages sont solidaires :
+# 1 ou 2 sans le reste → ConfigError au démarrage). L'auth du control-server gluetun est désactivée
+# sur le réseau interne `ec` (HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE='{"auth":"none"}'), donc aucun
+# secret à ajouter ici. Le restarter_url pointe le docker-socket-proxy (surface minimale : il
+# n'autorise QUE POST /vX.X/containers/amuled/restart) ; le crawler ne voit JAMAIS le socket Docker.
+# gluetun_control_url: http://gluetun:8000
+# restarter_url: http://docker-proxy:2375
+
 # Notifications apprise (E-D7) — secrets, ne JAMAIS versionner les vraies URLs.
 # tag = audience : community (découvertes) / operations (santé/sécurité).
 # observability:

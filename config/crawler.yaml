@@ -28,3 +28,9 @@ observability:                       # Plan E — métriques Prometheus + niveau
     enabled: true                    # expose /metrics sur un serveur HTTP dédié
     port: 9090                       # port du serveur de métriques
   notification_timeout_seconds: 5.0  # borne par notification apprise (E-D13)
+
+# port-sync (High-ID) — OPTIONNEL ; n'est ARMÉ que si gluetun_control_url ET restarter_url sont
+# aussi présents dans local.yaml (les 3 réglages sont solidaires, sinon ConfigError au démarrage).
+# port_sync:
+#   poll_interval_seconds: 60          # cadence du poll gluetun + comparaison du port d'écoute
+#   restart_min_interval_seconds: 300  # rate-limit des restarts : ≤ 1 restart / 5 min

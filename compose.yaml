@@ -20,9 +20,13 @@ services:
       VPN_TYPE: wireguard
       WIREGUARD_PRIVATE_KEY: ${WIREGUARD_PRIVATE_KEY}
       SERVER_COUNTRIES: ${SERVER_COUNTRIES:-}
-      # NAT-PMP/port-forwarding (l'un des 4 providers supportes) : le port-sync (High-ID) est un
-      # follow-up (F-D3). Tant qu'il n'est pas la, Low-ID est l'etat normal.
+      # NAT-PMP/port-forwarding (l'un des 4 providers supportes) : alimente le port-sync (High-ID)
+      # via GET http://gluetun:8000/v1/portforward. Tant que le port-sync n'est pas configure
+      # (gluetun_control_url+restarter_url+port_sync dans local.yaml), Low-ID est l'etat normal.
       VPN_PORT_FORWARDING: "on"
+      # Control-server : pas d'auth sur le reseau interne `ec` (seuls amuled/crawler/proxy y sont).
+      # Var + format verifies sur la doc gluetun (auth-by-default depuis v3.40).
+      HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE: '{"auth":"none"}'
     networks:
       - ec
     restart: unless-stopped
@@ -148,6 +152,33 @@ services:
     security_opt:
       - "no-new-privileges:true"
     # PAS de read_only : freshclam DOIT ecrire la base dans le volume (contrairement au verifier).
+    restart: unless-stopped
+
+  docker-proxy:
+    # Proxy Docker a SURFACE MINIMALE pour le port-sync (High-ID) : autorise UNIQUEMENT
+    # POST /v1.x/containers/amuled/restart (rien d'autre — deny par defaut, ^/$ ajoutes auto par
+    # wollomatic). Le crawler ne voit JAMAIS le socket Docker, il ne parle qu'a ce proxy sur `ec`.
+    # N'est utile QUE si le port-sync est configure (gluetun_control_url+restarter_url dans
+    # local.yaml) ; sinon le crawler ne l'appelle jamais.
+    image: wollomatic/socket-proxy:1.12.2     # epingle (jamais latest) ; allowlist par regex+methode
+    profiles: [full]
+    command:
+      - "-loglevel=info"
+      - "-allowfrom=0.0.0.0/0"                # joignable depuis `ec` (pas d'egress : reseau interne)
+      - "-listenip=0.0.0.0"
+      - "-proxyport=2375"
+      - "-socketpath=/var/run/docker.sock"
+      - "-allowPOST=/v1\\..{1,2}/containers/amuled/restart"   # ^ et $ ajoutes automatiquement
+    user: "65534:${DOCKER_GID:-0}"            # nobody + GID du groupe docker de l'hote (cf. .env)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - ec
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true
     restart: unless-stopped
 
 networks:

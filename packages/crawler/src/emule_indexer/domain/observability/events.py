@@ -91,6 +91,24 @@ class CrawlerStarted:
     mode: str
 
 
+@dataclass(frozen=True)
+class PortSyncTriggered:
+    old: int  # port d'écoute configuré avant
+    new: int  # port forwardé visé (vers lequel on aligne amuled)
+
+
+@dataclass(frozen=True)
+class HighIdRecovered:
+    port: int  # port High-ID confirmé après restart
+
+
+@dataclass(frozen=True)
+class PortMismatchUnresolved:
+    first_occurrence: bool  # edge-triggered (E-D8) — calculé via EdgeState
+    live: int  # port forwardé vivant (gluetun)
+    configured: int  # port d'écoute d'amuled (resté faux)
+
+
 type Event = (
     SearchCycleCompleted
     | SearchExecuted
@@ -107,4 +125,7 @@ type Event = (
     | ConnectedInstancesSampled
     | VerificationQueueDepthSampled
     | CrawlerStarted
+    | PortSyncTriggered
+    | HighIdRecovered
+    | PortMismatchUnresolved
 )

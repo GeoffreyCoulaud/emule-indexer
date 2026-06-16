@@ -22,8 +22,11 @@ from emule_indexer.domain.observability.events import (
     DownloadCompleted,
     DownloadQueued,
     Event,
+    HighIdRecovered,
     InstanceUnreachable,
     ObservationRecorded,
+    PortMismatchUnresolved,
+    PortSyncTriggered,
     PromotionFailed,
     SearchCycleCompleted,
     SearchExecuted,
@@ -69,6 +72,9 @@ class MetricName(StrEnum):
     CONNECTED_INSTANCES = "emule_connected_instances"
     VERIFICATION_QUEUE_DEPTH = "emule_verification_queue_depth"
     CRAWLER_UP = "emule_crawler_up"
+    PORT_SYNC_TRIGGERED = "emule_port_sync_triggered"
+    HIGH_ID_RECOVERED = "emule_high_id_recovered"
+    PORT_MISMATCH = "emule_port_mismatch"
 
 
 MetricKind = Literal["inc", "set", "observe"]
@@ -245,6 +251,32 @@ def describe(event: Event) -> Report:
                 f"🟢 instance en ligne (mode {event.mode})",
                 (MetricInstruction(MetricName.CRAWLER_UP, "set", (), 1.0),),
                 frozenset({Audience.COMMUNITY, Audience.OPERATIONS}),
+            )
+        case PortSyncTriggered():
+            return Report(
+                Severity.INFO,
+                f"port-sync : {event.old} → {event.new} (restart amuled)",
+                (MetricInstruction(MetricName.PORT_SYNC_TRIGGERED, "inc"),),
+            )
+        case HighIdRecovered():
+            return Report(
+                Severity.INFO,
+                f"High-ID retrouvé sur le port {event.port}",
+                (MetricInstruction(MetricName.HIGH_ID_RECOVERED, "inc"),),
+                frozenset({Audience.COMMUNITY}),
+            )
+        case PortMismatchUnresolved():
+            # Alerte de repli (DÉCISION 5) : OPERATIONS, edge-triggered (notif à la 1re occurrence
+            # seulement) ; la métrique s'incrémente à CHAQUE occurrence (Prometheus veut l'état
+            # brut).
+            # Formulation valable que le port ait été appliqué ou non : si `configured` == `live`,
+            # le SetPort+restart a pris mais le High-ID n'est pas (encore) revenu ; sinon le port
+            # n'a pas pu être appliqué (restart impossible). Pas de « X ≠ X » trompeur.
+            return Report(
+                Severity.WARNING,
+                f"High-ID non rétabli (port forwardé {event.live}, port amuled {event.configured})",
+                (MetricInstruction(MetricName.PORT_MISMATCH, "inc"),),
+                frozenset({Audience.OPERATIONS}) if event.first_occurrence else frozenset(),
             )
         case _:  # pragma: no cover
             assert_never(event)

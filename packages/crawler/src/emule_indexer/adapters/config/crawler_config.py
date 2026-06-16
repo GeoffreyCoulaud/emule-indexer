@@ -53,6 +53,19 @@ class VerifyConfig:
     poll_interval_seconds: float
 
 
+@dataclass(frozen=True)
+class PortSyncConfig:
+    """Politique de port-sync High-ID (design port-sync §8.1). OPTIONNELLE.
+
+    ``poll_interval_seconds`` : cadence du poll gluetun + comparaison du port. ``restart_min_
+    interval_seconds`` : fenêtre de rate-limit des restarts (≤ 1 restart / fenêtre) — empêche une
+    boucle de restarts si gluetun oscille ou si le port forwardé refuse de donner un High-ID.
+    """
+
+    poll_interval_seconds: float
+    restart_min_interval_seconds: float
+
+
 _LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 
 
@@ -97,6 +110,7 @@ class CrawlerConfig:
     download: DownloadConfig | None = None
     verify: VerifyConfig | None = None
     observability: ObservabilityConfig | None = None
+    port_sync: PortSyncConfig | None = None
 
 
 def _require_mapping(value: Any, what: str) -> dict[str, Any]:
@@ -211,6 +225,15 @@ def parse_crawler_config(raw: dict[str, Any]) -> CrawlerConfig:
         observability = _parse_observability(
             _require_mapping(raw["observability"], "section 'observability'")
         )
+    port_sync: PortSyncConfig | None = None
+    if "port_sync" in raw:
+        port_sync_raw = _require_mapping(raw["port_sync"], "section 'port_sync'")
+        port_sync = PortSyncConfig(
+            poll_interval_seconds=_positive(port_sync_raw, "poll_interval_seconds", "port_sync"),
+            restart_min_interval_seconds=_positive(
+                port_sync_raw, "restart_min_interval_seconds", "port_sync"
+            ),
+        )
     return CrawlerConfig(
         cycle_interval_seconds=_positive(raw, "cycle_interval_seconds", "crawler"),
         search_poll_budget_seconds=_positive(raw, "search_poll_budget_seconds", "crawler"),
@@ -223,4 +246,5 @@ def parse_crawler_config(raw: dict[str, Any]) -> CrawlerConfig:
         download=download,
         verify=verify,
         observability=observability,
+        port_sync=port_sync,
     )

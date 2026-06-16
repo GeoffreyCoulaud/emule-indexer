@@ -61,3 +61,8 @@ services:
     # Sidecar clamav retire du smoke (besoin d'Internet + base ~300 Mo, inutile clamav OFF) :
     # meme mecanique que gluetun => `[disabled]` (profil jamais active) ne le lance JAMAIS.
     profiles: !override [disabled]
+
+  docker-proxy:
+    # Proxy de restart retire du smoke : le port-sync n'y est pas configure (le crawler ne
+    # l'appelle pas) et il monterait le socket Docker hote pour rien. `[disabled]` => jamais lance.
+    profiles: !override [disabled]

@@ -45,6 +45,8 @@ class LocalConfig:
     staging_dir: str | None = None
     quarantine_dir: str | None = None
     verifier_url: str | None = None
+    gluetun_control_url: str | None = None
+    restarter_url: str | None = None
     notifications: tuple[NotificationTarget, ...] = ()
 
 
@@ -113,6 +115,10 @@ def parse_local_config(raw: dict[str, Any]) -> LocalConfig:
         staging_dir = _require_str(raw, "staging_dir", "local")
         quarantine_dir = _require_str(raw, "quarantine_dir", "local")
     verifier_url = _require_str(raw, "verifier_url", "local") if "verifier_url" in raw else None
+    gluetun_control_url = (
+        _require_str(raw, "gluetun_control_url", "local") if "gluetun_control_url" in raw else None
+    )
+    restarter_url = _require_str(raw, "restarter_url", "local") if "restarter_url" in raw else None
     notifications: list[NotificationTarget] = []
     if "observability" in raw:
         obs_raw = _require_mapping(raw["observability"], "section 'observability'")
@@ -138,5 +144,7 @@ def parse_local_config(raw: dict[str, Any]) -> LocalConfig:
         staging_dir=staging_dir,
         quarantine_dir=quarantine_dir,
         verifier_url=verifier_url,
+        gluetun_control_url=gluetun_control_url,
+        restarter_url=restarter_url,
         notifications=tuple(notifications),
     )

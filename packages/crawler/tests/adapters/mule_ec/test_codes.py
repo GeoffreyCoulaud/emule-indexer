@@ -78,6 +78,18 @@ def test_connstate_tags_and_bits_match_reference() -> None:
     assert codes.CONNSTATE_KAD_RUNNING == 0x10
 
 
+def test_preferences_opcodes_and_tags_match_reference() -> None:
+    # Port-sync (High-ID) : GET/SET preferences + sélecteur/tags de connexion.
+    # Réf. : vendor/amule/src/libs/ec/cpp/ECCodes.h (lignes citées dans le design §2).
+    assert codes.EC_OP_GET_PREFERENCES == 0x3F  # ECCodes.h:102
+    assert codes.EC_OP_SET_PREFERENCES == 0x40  # ECCodes.h:103 (= opcode de la RÉPONSE de GET)
+    assert codes.EC_TAG_SELECT_PREFS == 0x1000  # ECCodes.h:310
+    assert codes.EC_TAG_PREFS_CONNECTIONS == 0x1300  # ECCodes.h:323 (parent)
+    assert codes.EC_TAG_CONN_TCP_PORT == 0x1306  # ECCodes.h:329 (enfant)
+    assert codes.EC_TAG_CONN_UDP_PORT == 0x1307  # ECCodes.h:330 (enfant)
+    assert codes.EC_PREFS_CONNECTIONS == 0x00000004  # ECCodes.h:462 (bitmask de SELECT_PREFS)
+
+
 def test_tag_types_match_reference() -> None:
     # Réf. §3 (ECTagTypes.h).
     assert codes.EC_TAGTYPE_UNKNOWN == 0x00  # jamais émis ; garde du codec

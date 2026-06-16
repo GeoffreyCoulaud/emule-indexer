@@ -29,6 +29,8 @@ from prometheus_client import CollectorRegistry, start_http_server
 
 from emule_indexer.adapters.config.crawler_config import ConfigError, CrawlerConfig
 from emule_indexer.adapters.config.local_config import AmuleEndpoint, LocalConfig
+from emule_indexer.adapters.docker_restart_http import HttpMuleRestarter
+from emule_indexer.adapters.gluetun_port import GluetunPortReader
 from emule_indexer.adapters.mule_ec.client import AmuleEcClient
 from emule_indexer.adapters.observability.apprise_notifier import AppriseNotifier
 from emule_indexer.adapters.observability.dispatcher import ObservabilityDispatcher
@@ -45,6 +47,7 @@ from emule_indexer.adapters.persistence_sqlite.scheduler_state_repository import
 from emule_indexer.adapters.quarantine_fs import FilesystemQuarantine
 from emule_indexer.adapters.verifier_http import HttpContentVerifier
 from emule_indexer.application.edge_state import EdgeState
+from emule_indexer.application.port_sync_loop import PortSyncLoopDeps, port_sync_loop
 from emule_indexer.application.run_download_cycle import (
     CatalogReader,
     DownloadLoopDeps,
@@ -67,6 +70,8 @@ from emule_indexer.ports.content_verifier import ContentVerifier
 from emule_indexer.ports.decision_signal import DecisionSignal
 from emule_indexer.ports.mule_client import MuleClient, MuleUnreachableError
 from emule_indexer.ports.mule_download_client import DownloadEntry, MuleDownloadClient
+from emule_indexer.ports.mule_restarter import MuleRestarter
+from emule_indexer.ports.port_forwarding import PortForwardingReader
 from emule_indexer.ports.scheduler_state_repository import SchedulerStateRepository
 from emule_indexer.ports.telemetry import Telemetry
 
@@ -91,6 +96,24 @@ def default_verifier_factory(verifier_url: str) -> ContentVerifier:
     """Un ``HttpContentVerifier`` httpx sur l'URL du verifier (timeout dev raisonnable)."""
     client = httpx.AsyncClient(base_url=verifier_url, timeout=httpx.Timeout(10.0))
     return HttpContentVerifier(client)
+
+
+# Factories du port-sync (injectables en test — pattern verifier_factory). La 1re prend l'URL du
+# control-server gluetun, la 2e l'URL du docker-socket-proxy ; chacune rend l'adapter httpx réel.
+PortForwardingReaderFactory = Callable[[str], PortForwardingReader]
+MuleRestarterFactory = Callable[[str], MuleRestarter]
+
+
+def default_port_forwarding_reader_factory(gluetun_control_url: str) -> PortForwardingReader:
+    """Un ``GluetunPortReader`` httpx sur l'URL du control-server gluetun (timeout court)."""
+    client = httpx.AsyncClient(base_url=gluetun_control_url, timeout=httpx.Timeout(10.0))
+    return GluetunPortReader(client)
+
+
+def default_mule_restarter_factory(restarter_url: str) -> MuleRestarter:
+    """Un ``HttpMuleRestarter`` httpx sur l'URL du docker-socket-proxy (timeout court)."""
+    client = httpx.AsyncClient(base_url=restarter_url, timeout=httpx.Timeout(10.0))
+    return HttpMuleRestarter(client)
 
 
 MetricsServer = Callable[[int, CollectorRegistry], None]
@@ -170,6 +193,10 @@ class CrawlerApp:
         client_factory: ClientFactory = default_client_factory,
         download_client_factory: DownloadClientFactory = default_download_client_factory,
         verifier_factory: VerifierFactory = default_verifier_factory,
+        port_forwarding_reader_factory: PortForwardingReaderFactory = (
+            default_port_forwarding_reader_factory
+        ),
+        mule_restarter_factory: MuleRestarterFactory = default_mule_restarter_factory,
         metrics_server: MetricsServer = default_metrics_server,
     ) -> None:
         self._crawler_config = crawler_config
@@ -182,6 +209,8 @@ class CrawlerApp:
         self._client_factory = client_factory
         self._download_client_factory = download_client_factory
         self._verifier_factory = verifier_factory
+        self._port_forwarding_reader_factory = port_forwarding_reader_factory
+        self._mule_restarter_factory = mule_restarter_factory
         self._metrics_server = metrics_server
         self._shutdown = asyncio.Event()
         self._signal_count = 0
@@ -257,6 +286,92 @@ class CrawlerApp:
                 + ", ".join(missing)
                 + " (refus de télécharger sans config complète)"
             )
+
+    def _port_sync_enabled(self) -> bool:
+        """Le port-sync s'active SSI les 3 configs sont TOUTES présentes (design §8.2/§9)."""
+        return (
+            self._local_config.gluetun_control_url is not None
+            and self._local_config.restarter_url is not None
+            and self._crawler_config.port_sync is not None
+        )
+
+    def _require_port_sync_config(self) -> None:
+        """Fail-fast au montage si le port-sync est déclenché PARTIELLEMENT (miroir DV15).
+
+        Les 3 réglages (``gluetun_control_url`` + ``restarter_url`` + ``crawler.port_sync``) sont
+        SOLIDAIRES : 1 ou 2 présents sans le reste = config incohérente → ``ConfigError`` (on ne
+        port-syncerait jamais à moitié). Les 3 absents = port-sync OFF (Low-ID toléré, mode
+        observer/full inchangé). Miroir de ``_require_full_config``.
+        """
+        present = [
+            self._local_config.gluetun_control_url is not None,
+            self._local_config.restarter_url is not None,
+            self._crawler_config.port_sync is not None,
+        ]
+        if any(present) and not all(present):
+            missing: list[str] = []
+            if self._local_config.gluetun_control_url is None:
+                missing.append("local.gluetun_control_url")
+            if self._local_config.restarter_url is None:
+                missing.append("local.restarter_url")
+            if self._crawler_config.port_sync is None:
+                missing.append("crawler.port_sync")
+            raise ConfigError(
+                "port-sync partiellement configuré ; il exige AUSSI : "
+                + ", ".join(missing)
+                + " (les 3 réglages sont solidaires)"
+            )
+
+    async def _build_port_sync_loop(
+        self,
+        *,
+        stack: AsyncExitStack,
+        telemetry: Telemetry,
+        edge: EdgeState,
+    ) -> PortSyncLoopDeps:
+        """Assemble les deps de la boucle port-sync (design §9). Suppose la config présente.
+
+        Lecteur gluetun (factory) + restarter (factory), tous deux ``aclose`` poussés sur le stack.
+        Connexion EC port-sync DÉDIÉE (R6 : pas de contention avec download/search) vers l'endpoint
+        amuled, connectée en TOLÉRANT ``MuleUnreachableError`` au boot (un daemon down ne tue pas le
+        crawler ; le backoff de la boucle gouverne). En prod, host = ``gluetun`` (compose) — c'est
+        le MÊME endpoint que les autres clients EC.
+        """
+        gluetun_control_url = self._local_config.gluetun_control_url
+        restarter_url = self._local_config.restarter_url
+        port_sync_config = self._crawler_config.port_sync
+        assert gluetun_control_url is not None  # garanti par _port_sync_enabled (mypy : narrow)
+        assert restarter_url is not None
+        assert port_sync_config is not None
+
+        reader = self._port_forwarding_reader_factory(gluetun_control_url)
+        stack.push_async_callback(reader.aclose)  # type: ignore[attr-defined]
+        restarter = self._mule_restarter_factory(restarter_url)
+        stack.push_async_callback(restarter.aclose)  # type: ignore[attr-defined]
+
+        # Connexion EC DÉDIÉE au port-sync : on vise le 1er endpoint amuled configuré (host EC en
+        # prod = gluetun). Tolère MuleUnreachableError au boot, comme la connexion download.
+        endpoint = self._local_config.amules[0]
+        ec_client = self._client_factory(endpoint)
+        stack.push_async_callback(ec_client.close)
+        try:
+            await ec_client.connect()
+        except MuleUnreachableError as error:
+            _logger.warning(
+                "daemon port-sync injoignable au démarrage (%s) — toléré, retry par la boucle",
+                error,
+            )
+        return PortSyncLoopDeps(
+            reader=reader,
+            ports=ec_client,  # type: ignore[arg-type]  # AmuleEcClient satisfait PortPreferences
+            restarter=restarter,
+            clock=self._clock,
+            telemetry=telemetry,
+            edge=edge,
+            poll_interval_seconds=port_sync_config.poll_interval_seconds,
+            restart_min_interval_seconds=port_sync_config.restart_min_interval_seconds,
+            shutdown=self._shutdown,
+        )
 
     async def _build_full_loops(
         self,
@@ -342,6 +457,7 @@ class CrawlerApp:
         backoff: BackoffRegistry,
         download_deps: DownloadLoopDeps | None,
         verify_deps: VerifyLoopDeps | None,
+        port_sync_deps: PortSyncLoopDeps | None,
         telemetry: Telemetry,
         edge: EdgeState,
     ) -> None:
@@ -386,6 +502,8 @@ class CrawlerApp:
                 tasks.append(group.create_task(download_loop(download_deps)))
             if verify_deps is not None:
                 tasks.append(group.create_task(verification_loop(verify_deps)))
+            if port_sync_deps is not None:
+                tasks.append(group.create_task(port_sync_loop(port_sync_deps)))
             await self._shutdown.wait()  # NON borné (la borne est désarmée tant qu'on tourne)
             shutdown_timeout.reschedule(
                 asyncio.get_running_loop().time() + self._crawler_config.shutdown_deadline_seconds
@@ -509,6 +627,16 @@ class CrawlerApp:
                 )
                 _logger.info("mode full : boucles download + vérification armées")
 
+            # Port-sync (High-ID) : INDÉPENDANT du mode observer/full (déclencheur propre =
+            # gluetun_control_url ET restarter_url ET crawler.port_sync). Fail-fast si partiel.
+            self._require_port_sync_config()
+            port_sync_deps: PortSyncLoopDeps | None = None
+            if self._port_sync_enabled():
+                port_sync_deps = await self._build_port_sync_loop(
+                    stack=stack, telemetry=telemetry, edge=edge
+                )
+                _logger.info("port-sync (High-ID) armé")
+
             mode = "full" if self._local_config.verifier_url is not None else "observer"
             await telemetry.emit(CrawlerStarted(mode=mode))
 
@@ -526,6 +654,7 @@ class CrawlerApp:
                     backoff=backoff,
                     download_deps=download_deps,
                     verify_deps=verify_deps,
+                    port_sync_deps=port_sync_deps,
                     telemetry=telemetry,
                     edge=edge,
                 )

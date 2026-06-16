@@ -7,6 +7,7 @@ from emule_indexer.adapters.config.crawler_config import (
     ConfigError,
     CrawlerConfig,
     DownloadConfig,
+    PortSyncConfig,
     VerifyConfig,
     parse_crawler_config,
 )
@@ -202,6 +203,55 @@ def test_verify_section_must_be_a_mapping() -> None:
     raw = _valid_raw()
     raw["verify"] = [1, 2]
     with pytest.raises(ConfigError, match="section 'verify'"):
+        parse_crawler_config(raw)
+
+
+def test_port_sync_section_is_optional() -> None:
+    config = parse_crawler_config(_valid_raw())  # pas de section port_sync
+    assert config.port_sync is None
+
+
+def test_port_sync_section_is_parsed_when_present() -> None:
+    raw = _valid_raw()
+    raw["port_sync"] = {"poll_interval_seconds": 60.0, "restart_min_interval_seconds": 300.0}
+    config = parse_crawler_config(raw)
+    assert config.port_sync == PortSyncConfig(
+        poll_interval_seconds=60.0, restart_min_interval_seconds=300.0
+    )
+
+
+def test_port_sync_poll_interval_must_be_positive() -> None:
+    raw = _valid_raw()
+    raw["port_sync"] = {"poll_interval_seconds": 0.0, "restart_min_interval_seconds": 300.0}
+    with pytest.raises(ConfigError, match="strictement positif"):
+        parse_crawler_config(raw)
+
+
+def test_port_sync_restart_min_interval_must_be_positive() -> None:
+    raw = _valid_raw()
+    raw["port_sync"] = {"poll_interval_seconds": 60.0, "restart_min_interval_seconds": 0.0}
+    with pytest.raises(ConfigError, match="strictement positif"):
+        parse_crawler_config(raw)
+
+
+def test_port_sync_poll_interval_key_is_required() -> None:
+    raw = _valid_raw()
+    raw["port_sync"] = {"restart_min_interval_seconds": 300.0}
+    with pytest.raises(ConfigError, match="poll_interval_seconds"):
+        parse_crawler_config(raw)
+
+
+def test_port_sync_restart_min_interval_key_is_required() -> None:
+    raw = _valid_raw()
+    raw["port_sync"] = {"poll_interval_seconds": 60.0}
+    with pytest.raises(ConfigError, match="restart_min_interval_seconds"):
+        parse_crawler_config(raw)
+
+
+def test_port_sync_section_must_be_a_mapping() -> None:
+    raw = _valid_raw()
+    raw["port_sync"] = [1, 2]
+    with pytest.raises(ConfigError, match="section 'port_sync'"):
         parse_crawler_config(raw)
 
 

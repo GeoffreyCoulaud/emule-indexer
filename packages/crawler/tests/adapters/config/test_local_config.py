@@ -207,6 +207,42 @@ def test_verifier_url_non_string_is_fatal() -> None:
         parse_local_config(raw)
 
 
+def test_port_sync_urls_are_optional() -> None:
+    config = parse_local_config(_valid_raw())
+    assert config.gluetun_control_url is None
+    assert config.restarter_url is None
+
+
+def test_port_sync_urls_are_parsed_when_present() -> None:
+    raw = _valid_raw()
+    raw["gluetun_control_url"] = "http://gluetun:8000"
+    raw["restarter_url"] = "http://docker-proxy:2375"
+    config = parse_local_config(raw)
+    assert config.gluetun_control_url == "http://gluetun:8000"
+    assert config.restarter_url == "http://docker-proxy:2375"
+
+
+def test_gluetun_control_url_empty_string_is_fatal() -> None:
+    raw = _valid_raw()
+    raw["gluetun_control_url"] = ""
+    with pytest.raises(ConfigError, match="gluetun_control_url"):
+        parse_local_config(raw)
+
+
+def test_restarter_url_empty_string_is_fatal() -> None:
+    raw = _valid_raw()
+    raw["restarter_url"] = ""
+    with pytest.raises(ConfigError, match="restarter_url"):
+        parse_local_config(raw)
+
+
+def test_restarter_url_non_string_is_fatal() -> None:
+    raw = _valid_raw()
+    raw["restarter_url"] = 1234
+    with pytest.raises(ConfigError, match="restarter_url"):
+        parse_local_config(raw)
+
+
 from emule_indexer.adapters.config.local_config import NotificationTarget  # noqa: E402
 from emule_indexer.domain.observability.policy import Audience  # noqa: E402
 

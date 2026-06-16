@@ -23,7 +23,7 @@ from emule_indexer.domain.matching.models import TargetSegment
 from emule_indexer.domain.matching.validation import parse_matcher_config
 from emule_indexer.domain.observation import FileObservation
 from emule_indexer.ports.content_verifier import VerificationResult
-from emule_indexer.ports.mule_client import MuleUnreachableError, NetworkStatus
+from emule_indexer.ports.mule_client import KadStatus, MuleUnreachableError, NetworkStatus
 from emule_indexer.ports.mule_download_client import DownloadEntry
 from tests.application.fakes import FakeClock, FakeMuleClient, RecordingSignal
 
@@ -1015,3 +1015,274 @@ async def test_emits_crawler_started_full_mode(
     with caplog.at_level(logging.INFO, logger="emule_indexer.observability"):
         await asyncio.wait_for(app.run(), timeout=5.0)
     assert any("mode full" in r.getMessage() for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Port-sync (High-ID) : boucle ON / OFF / partiel → ConfigError
+# ---------------------------------------------------------------------------
+
+
+class _PortSyncCapableClient(FakeMuleClient):
+    """Client EC du port-sync de test : satisfait get/set_listen_port + network_status (High-ID)."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status=NetworkStatus(ed2k_id=0x02000001, ed2k_high=True, kad_status=KadStatus.CONNECTED)
+        )
+        self.listen_port = 4662
+        self.set_ports: list[int] = []
+
+    async def get_listen_port(self) -> int:
+        return self.listen_port
+
+    async def set_listen_port(self, port: int) -> None:
+        self.set_ports.append(port)
+        self.listen_port = port
+
+
+class _ShutdownOnPollReader:
+    """Lecteur du port forwardé qui déclenche l'arrêt au PREMIER poll (1 cycle puis stop).
+
+    Borne le run de façon DÉTERMINISTE sur la boucle de PORT-SYNC elle-même : l'arrêt n'est posé
+    qu'une fois que ``forwarded_port`` a tourné → prouve que le corps de la boucle a démarré.
+    Rend ``None`` (« pas prêt ») → la boucle dort sans toucher l'EC (pas de divergence à corriger).
+    """
+
+    def __init__(self, app_holder: dict[str, CrawlerApp]) -> None:
+        self._app_holder = app_holder
+        self.calls = 0
+
+    async def forwarded_port(self) -> int | None:
+        self.calls += 1
+        self._app_holder["app"]._on_signal()  # arrêt APRÈS le 1er poll
+        return None
+
+    async def aclose(self) -> None:
+        return None
+
+
+class _RecordingRestarter:
+    """Restarter no-op de test (jamais appelé ici : le reader rend None → pas de restart)."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def restart(self) -> None:
+        self.calls += 1
+
+    async def aclose(self) -> None:
+        return None
+
+
+def _port_sync_crawler_config() -> CrawlerConfig:
+    from emule_indexer.adapters.config.crawler_config import PortSyncConfig
+
+    base = _crawler_config()
+    return CrawlerConfig(
+        cycle_interval_seconds=base.cycle_interval_seconds,
+        search_poll_budget_seconds=base.search_poll_budget_seconds,
+        search_poll_interval_seconds=base.search_poll_interval_seconds,
+        keyword_pause_min_seconds=base.keyword_pause_min_seconds,
+        keyword_pause_max_seconds=base.keyword_pause_max_seconds,
+        backoff=base.backoff,
+        decision_poll_interval_seconds=base.decision_poll_interval_seconds,
+        shutdown_deadline_seconds=base.shutdown_deadline_seconds,
+        port_sync=PortSyncConfig(poll_interval_seconds=60.0, restart_min_interval_seconds=300.0),
+    )
+
+
+def _port_sync_local_config(
+    tmp_path: Path, *, gluetun_control_url: str | None, restarter_url: str | None
+) -> LocalConfig:
+    base = _local_config(tmp_path)
+    return LocalConfig(
+        amules=base.amules,
+        catalog_db_path=base.catalog_db_path,
+        local_db_path=base.local_db_path,
+        node_id=base.node_id,
+        gluetun_control_url=gluetun_control_url,
+        restarter_url=restarter_url,
+    )
+
+
+@pytest.mark.asyncio
+async def test_port_sync_loop_runs_when_all_three_configs_present(
+    tmp_path: Path, matcher_config: MatcherConfig
+) -> None:
+    # Les 3 réglages présents → la boucle port-sync est ARMÉE. L'arrêt est piloté par le reader
+    # (1er poll → signal) → on prouve que le CORPS de la boucle a tourné, sans course de timing.
+    holder: dict[str, CrawlerApp] = {}
+    reader = _ShutdownOnPollReader(holder)
+    ec_client = _PortSyncCapableClient()
+
+    app = CrawlerApp(
+        crawler_config=_port_sync_crawler_config(),
+        local_config=_port_sync_local_config(
+            tmp_path,
+            gluetun_control_url="http://gluetun:8000",
+            restarter_url="http://docker-proxy:2375",
+        ),
+        targets=_TARGETS,
+        matcher_config=matcher_config,
+        clock=FakeClock(),
+        rng=_NoopRng(),
+        signal_hub=RecordingSignal(),
+        client_factory=lambda endpoint: ec_client,
+        port_forwarding_reader_factory=lambda url: reader,
+        mule_restarter_factory=lambda url: _RecordingRestarter(),
+    )
+    holder["app"] = app
+    await asyncio.wait_for(app.run(), timeout=5.0)
+    assert reader.calls >= 1  # le corps de la boucle port-sync a bien exécuté ≥ 1 cycle
+
+
+@pytest.mark.asyncio
+async def test_port_sync_loop_off_when_no_config(
+    tmp_path: Path, matcher_config: MatcherConfig
+) -> None:
+    # Aucun des 3 réglages → boucle OFF (Low-ID toléré). Les factories ne doivent JAMAIS être
+    # appelées : on le prouve avec des factories qui lèveraient si elles l'étaient.
+    holder: dict[str, CrawlerApp] = {}
+
+    def boom_reader(url: str) -> object:
+        raise AssertionError("la factory reader ne doit pas être appelée (port-sync OFF)")
+
+    def boom_restarter(url: str) -> object:
+        raise AssertionError("la factory restarter ne doit pas être appelée (port-sync OFF)")
+
+    def factory(endpoint: AmuleEndpoint) -> _ShutdownOnStatusClient:
+        return _ShutdownOnStatusClient(holder)
+
+    app = CrawlerApp(
+        crawler_config=_crawler_config(),  # pas de port_sync
+        local_config=_local_config(tmp_path),  # pas d'URLs
+        targets=_TARGETS,
+        matcher_config=matcher_config,
+        clock=FakeClock(),
+        rng=_NoopRng(),
+        signal_hub=RecordingSignal(),
+        client_factory=factory,
+        port_forwarding_reader_factory=boom_reader,  # type: ignore[arg-type]
+        mule_restarter_factory=boom_restarter,  # type: ignore[arg-type]
+    )
+    holder["app"] = app
+    await asyncio.wait_for(app.run(), timeout=5.0)  # ne lève pas (factories jamais appelées)
+
+
+@pytest.mark.asyncio
+async def test_port_sync_partial_config_is_fail_fast_missing_restarter(
+    tmp_path: Path, matcher_config: MatcherConfig
+) -> None:
+    # gluetun_control_url + crawler.port_sync présents MAIS restarter_url absent → ConfigError.
+    local = _port_sync_local_config(
+        tmp_path, gluetun_control_url="http://gluetun:8000", restarter_url=None
+    )
+    app = CrawlerApp(
+        crawler_config=_port_sync_crawler_config(),
+        local_config=local,
+        targets=_TARGETS,
+        matcher_config=matcher_config,
+        clock=FakeClock(),
+        rng=_NoopRng(),
+        signal_hub=RecordingSignal(),
+        client_factory=lambda endpoint: FakeMuleClient(),
+    )
+    with pytest.raises(ConfigError, match="restarter_url"):
+        await app.run()
+
+
+@pytest.mark.asyncio
+async def test_port_sync_partial_config_is_fail_fast_missing_gluetun_url(
+    tmp_path: Path, matcher_config: MatcherConfig
+) -> None:
+    # restarter_url + crawler.port_sync présents MAIS gluetun_control_url absent → ConfigError
+    # (couvre la branche gluetun_control_url is None de _require_port_sync_config).
+    local = _port_sync_local_config(
+        tmp_path, gluetun_control_url=None, restarter_url="http://docker-proxy:2375"
+    )
+    app = CrawlerApp(
+        crawler_config=_port_sync_crawler_config(),
+        local_config=local,
+        targets=_TARGETS,
+        matcher_config=matcher_config,
+        clock=FakeClock(),
+        rng=_NoopRng(),
+        signal_hub=RecordingSignal(),
+        client_factory=lambda endpoint: FakeMuleClient(),
+    )
+    with pytest.raises(ConfigError, match="gluetun_control_url"):
+        await app.run()
+
+
+@pytest.mark.asyncio
+async def test_port_sync_partial_config_is_fail_fast_missing_section(
+    tmp_path: Path, matcher_config: MatcherConfig
+) -> None:
+    # Les 2 URLs présentes MAIS crawler.port_sync absent → ConfigError (couvre la branche section).
+    local = _port_sync_local_config(
+        tmp_path,
+        gluetun_control_url="http://gluetun:8000",
+        restarter_url="http://docker-proxy:2375",
+    )
+    app = CrawlerApp(
+        crawler_config=_crawler_config(),  # port_sync=None
+        local_config=local,
+        targets=_TARGETS,
+        matcher_config=matcher_config,
+        clock=FakeClock(),
+        rng=_NoopRng(),
+        signal_hub=RecordingSignal(),
+        client_factory=lambda endpoint: FakeMuleClient(),
+    )
+    with pytest.raises(ConfigError, match="crawler.port_sync"):
+        await app.run()
+
+
+@pytest.mark.asyncio
+async def test_port_sync_tolerates_ec_daemon_unreachable_at_startup(
+    tmp_path: Path, matcher_config: MatcherConfig
+) -> None:
+    # La connexion EC port-sync dédiée injoignable au démarrage est TOLÉRÉE (R6) : on n'échoue
+    # PAS, la boucle est quand même armée (le backoff de la boucle gouverne).
+    holder: dict[str, CrawlerApp] = {}
+    reader = _ShutdownOnPollReader(holder)
+
+    class _UnreachableEcClient(_PortSyncCapableClient):
+        async def connect(self) -> None:
+            raise MuleUnreachableError("port-sync daemon down")
+
+    app = CrawlerApp(
+        crawler_config=_port_sync_crawler_config(),
+        local_config=_port_sync_local_config(
+            tmp_path,
+            gluetun_control_url="http://gluetun:8000",
+            restarter_url="http://docker-proxy:2375",
+        ),
+        targets=_TARGETS,
+        matcher_config=matcher_config,
+        clock=FakeClock(),
+        rng=_NoopRng(),
+        signal_hub=RecordingSignal(),
+        client_factory=lambda endpoint: _UnreachableEcClient(),
+        port_forwarding_reader_factory=lambda url: reader,
+        mule_restarter_factory=lambda url: _RecordingRestarter(),
+    )
+    holder["app"] = app
+    await asyncio.wait_for(app.run(), timeout=5.0)  # ne lève pas : connect toléré
+    assert reader.calls >= 1
+
+
+def test_default_port_forwarding_reader_factory_builds_a_gluetun_reader() -> None:
+    from emule_indexer.adapters.gluetun_port import GluetunPortReader
+    from emule_indexer.composition.app import default_port_forwarding_reader_factory
+
+    reader = default_port_forwarding_reader_factory("http://gluetun:8000")
+    assert isinstance(reader, GluetunPortReader)
+
+
+def test_default_mule_restarter_factory_builds_an_http_restarter() -> None:
+    from emule_indexer.adapters.docker_restart_http import HttpMuleRestarter
+    from emule_indexer.composition.app import default_mule_restarter_factory
+
+    restarter = default_mule_restarter_factory("http://docker-proxy:2375")
+    assert isinstance(restarter, HttpMuleRestarter)

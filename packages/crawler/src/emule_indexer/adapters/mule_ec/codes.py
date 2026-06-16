@@ -36,6 +36,8 @@ EC_OP_SEARCH_PROGRESS: Final[int] = 0x29
 EC_OP_DOWNLOAD_SEARCH_RESULT: Final[int] = 0x2A
 EC_OP_SERVER_DISCONNECT: Final[int] = 0x2E
 EC_OP_SERVER_CONNECT: Final[int] = 0x2F
+EC_OP_GET_PREFERENCES: Final[int] = 0x3F  # ECCodes.h:102 ; port-sync (lecture du port d'écoute)
+EC_OP_SET_PREFERENCES: Final[int] = 0x40  # ECCodes.h:103 ; AUSSI l'opcode de la RÉPONSE de GET
 EC_OP_KAD_START: Final[int] = 0x48
 EC_OP_KAD_STOP: Final[int] = 0x49
 EC_OP_AUTH_SALT: Final[int] = 0x4F
@@ -104,6 +106,13 @@ EC_TAG_SEARCH_EXTENSION: Final[int] = 0x0706
 EC_TAG_SEARCH_AVAILABILITY: Final[int] = 0x0707
 EC_TAG_SEARCH_STATUS: Final[int] = 0x0708
 EC_TAG_SEARCH_PARENT: Final[int] = 0x0709
+
+# --- Préférences (port-sync High-ID, réf. ECCodes.h ; design port-sync §2) --------------
+EC_TAG_SELECT_PREFS: Final[int] = 0x1000  # ECCodes.h:310 — sélecteur de catégories de prefs
+EC_TAG_PREFS_CONNECTIONS: Final[int] = 0x1300  # ECCodes.h:323 — parent (CECEmptyTag)
+EC_TAG_CONN_TCP_PORT: Final[int] = 0x1306  # ECCodes.h:329 — port d'écoute TCP eD2k (enfant)
+EC_TAG_CONN_UDP_PORT: Final[int] = 0x1307  # ECCodes.h:330 — port UDP (enfant)
+EC_PREFS_CONNECTIONS: Final[int] = 0x00000004  # ECCodes.h:462 — bitmask de EC_TAG_SELECT_PREFS
 
 # --- Types de valeurs (réf. §3, ECTagTypes.h) -------------------------------------------
 EC_TAGTYPE_UNKNOWN: Final[int] = 0x00  # jamais émis
