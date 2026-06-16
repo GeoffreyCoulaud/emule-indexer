@@ -105,5 +105,7 @@ def _minimal_env(cfg: AnalysisConfig) -> dict[str, str]:
         "CLAMAV_DB_DIR": cfg.clamav_db_dir,
         "HEADER_BYTES": str(cfg.header_bytes),
         "ANALYSIS_TIMEOUT_S": str(cfg.timeout_s),
+        # l'enfant re-résout sa config depuis l'env : on lui transmet l'état du ring noyau.
+        "SECCOMP_ENABLED": "1" if cfg.seccomp_enabled else "0",
         "PATH": _MINIMAL_PATH,
     }

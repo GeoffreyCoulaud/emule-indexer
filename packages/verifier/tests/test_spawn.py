@@ -101,6 +101,7 @@ def test_minimal_env_contains_only_whitelisted_vars() -> None:
     assert runner.env["CLAMAV_DB_DIR"] == _CFG.clamav_db_dir
     assert runner.env["HEADER_BYTES"] == str(_CFG.header_bytes)
     assert runner.env["ANALYSIS_TIMEOUT_S"] == str(_CFG.timeout_s)
+    assert runner.env["SECCOMP_ENABLED"] == "1"
     assert set(runner.env) == {
         "QUARANTINE_DIR",
         "ENABLED_CHECKS",
@@ -109,6 +110,7 @@ def test_minimal_env_contains_only_whitelisted_vars() -> None:
         "CLAMAV_DB_DIR",
         "HEADER_BYTES",
         "ANALYSIS_TIMEOUT_S",
+        "SECCOMP_ENABLED",
         "PATH",
     }
 

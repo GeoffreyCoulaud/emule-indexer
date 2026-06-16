@@ -30,6 +30,29 @@ _NEEDS_FFMPEG = pytest.mark.skipif(
     reason="ffmpeg/ffprobe requis pour l'intégration D-analysis",
 )
 
+
+def _seccomp_is_feasible() -> bool:
+    # Le ring noyau réel exige pyseccomp + libseccomp + un no_new_privs posable. On essaie de poser
+    # un filtre minimal (allow par défaut) DANS UN ENFANT JETABLE (os.fork) pour ne PAS contaminer
+    # le process de test — si l'install échoue (lib absente / no_new_privs impossible), on skip.
+    pid = os.fork()
+    if pid == 0:  # pragma: no cover (enfant : ne revient jamais dans la couverture du parent)
+        try:
+            import pyseccomp
+
+            pyseccomp.SyscallFilter(pyseccomp.ALLOW).load()
+            os._exit(0)
+        except BaseException:
+            os._exit(1)
+    _, status = os.waitpid(pid, 0)
+    return os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
+
+
+_NEEDS_SECCOMP = pytest.mark.skipif(
+    not _seccomp_is_feasible(),
+    reason="pyseccomp/libseccomp + no_new_privs requis pour le ring noyau réel",
+)
+
 _CLAMSCAN = shutil.which("clamscan")
 # Dossier de la base de signatures réelle : pointable vers le volume du sidecar freshclam via
 # CLAMAV_DB_DIR ; défaut = /var/lib/clamav (freshclam local). On exige clamscan ET une base
@@ -233,3 +256,43 @@ def test_real_missing_base_is_suspicious(tmp_path: Path) -> None:
     empty_db.mkdir()
     cfg = _clamav_cfg(quarantine, ENABLED_CHECKS="clamav", CLAMAV_DB_DIR=str(empty_db))
     assert _verify(quarantine, cfg)[0] == "suspicious"
+
+
+# --- ring noyau (filtre seccomp réel) : le filet minimal = « clean préservé sous filtre ». -------
+
+
+@_NEEDS_SECCOMP
+@_NEEDS_FFMPEG
+def test_real_clean_media_stays_clean_under_seccomp(tmp_path: Path) -> None:
+    # PREUVE que le filtre seccomp réel (SECCOMP_ENABLED=1) ne casse RIEN de légitime : un vrai
+    # petit média sain reste `clean` avec le ring noyau posé dans l'enfant. Si le filtre tuait/
+    # cassait l'analyse (ffprobe fork/exec, lecture du fichier), le verdict tomberait suspicious.
+    quarantine = tmp_path / "quarantine"
+    quarantine.mkdir()
+    target = quarantine / _HASH
+    assert _FFMPEG is not None
+    subprocess.run(
+        [
+            _FFMPEG,
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=64x64:d=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=1",
+            "-shortest",
+            "-f",
+            "matroska",
+            str(target),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    cfg = _cfg(quarantine, SECCOMP_ENABLED="1")
+    verdict, real_meta, _ = _verify(quarantine, cfg)
+    assert verdict == "clean"
+    assert real_meta.get("container") is not None

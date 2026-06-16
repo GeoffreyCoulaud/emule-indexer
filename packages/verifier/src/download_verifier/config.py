@@ -32,6 +32,7 @@ class AnalysisConfig:
     egress_cap_bytes: int
     header_bytes: int
     quarantine_dir: str
+    seccomp_enabled: bool
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "AnalysisConfig":
@@ -64,6 +65,8 @@ class AnalysisConfig:
             egress_cap_bytes=_parse_int(env.get("EGRESS_CAP_BYTES"), 65536),
             header_bytes=_parse_int(env.get("HEADER_BYTES"), 4096),
             quarantine_dir=env.get("QUARANTINE_DIR", _DEFAULT_QUARANTINE),
+            # ring noyau (seccomp) ON par défaut : en prod le conteneur pose no_new_privs (§3).
+            seccomp_enabled=_parse_bool(env.get("SECCOMP_ENABLED"), True),
         )
 
 
@@ -92,3 +95,13 @@ def _parse_float(raw: str | None, default: float) -> float:
         return float(raw)
     except ValueError as exc:
         raise ValueError(f"flottant attendu, reçu {raw!r}") from exc
+
+
+def _parse_bool(raw: str | None, default: bool) -> bool:
+    if raw is None:
+        return default
+    if raw in ("0", "false", "no"):
+        return False
+    if raw in ("1", "true", "yes"):
+        return True
+    raise ValueError(f"booléen attendu, reçu {raw!r}")

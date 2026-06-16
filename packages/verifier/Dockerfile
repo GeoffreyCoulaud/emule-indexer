@@ -25,12 +25,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # --- Runtime : python slim + ffmpeg (ffprobe) + clamav (clamscan), non-root, venv copie ---
 FROM python:3.12-slim-bookworm
 
-# ffmpeg fournit ffprobe (D-analysis) ; clamav fournit clamscan (check par signatures, opt-in).
+# ffmpeg fournit ffprobe (D-analysis) ; clamav fournit clamscan (check par signatures, opt-in) ;
+# libseccomp2 fournit libseccomp.so.2 chargée au runtime par pyseccomp (ring noyau seccomp-bpf).
 # freshclam N'EST PAS installé (--no-install-recommends l'évite) : la base de signatures vient d'un
 # volume RO peuplé par le sidecar freshclam → l'image verifier reste sans accès réseau (internal).
 # On purge /var/lib/clamav (base vide déposée par apt) : la base réelle est montée sur /clamav-db.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg clamav \
+    && apt-get install -y --no-install-recommends ffmpeg clamav libseccomp2 \
     && rm -rf /var/lib/clamav/* /var/lib/apt/lists/*
 
 # User non-root (999:999) — composera avec le durcissement compose (user:, read_only).

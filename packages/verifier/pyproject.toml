@@ -9,6 +9,7 @@ dependencies = [
     "puremagic>=1.28",
     "prometheus-client>=0.21",
     "pyyaml>=6.0.3",
+    "pyseccomp>=0.1.2",
 ]
 
 [build-system]

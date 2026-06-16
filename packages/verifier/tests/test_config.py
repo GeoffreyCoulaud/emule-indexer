@@ -118,3 +118,28 @@ def test_clamav_off_keeps_baseline_rlimits() -> None:
     cfg = AnalysisConfig.from_env({"ENABLED_CHECKS": "type_sniff,ffprobe"})
     assert cfg.rlimit_as_bytes == 512 * 1024 * 1024
     assert cfg.rlimit_cpu_s == 20
+
+
+def test_seccomp_enabled_defaults_true() -> None:
+    # ring noyau ON par défaut (prod conteneur : no_new_privs posé).
+    assert AnalysisConfig.from_env({}).seccomp_enabled is True
+
+
+def test_seccomp_enabled_parsed_false() -> None:
+    # override dev/CI bare-metal : "0"/"false"/"no" → désactivé.
+    assert AnalysisConfig.from_env({"SECCOMP_ENABLED": "0"}).seccomp_enabled is False
+    assert AnalysisConfig.from_env({"SECCOMP_ENABLED": "false"}).seccomp_enabled is False
+    assert AnalysisConfig.from_env({"SECCOMP_ENABLED": "no"}).seccomp_enabled is False
+
+
+def test_seccomp_enabled_parsed_true() -> None:
+    # "1"/"true"/"yes" → activé explicitement.
+    assert AnalysisConfig.from_env({"SECCOMP_ENABLED": "1"}).seccomp_enabled is True
+    assert AnalysisConfig.from_env({"SECCOMP_ENABLED": "true"}).seccomp_enabled is True
+    assert AnalysisConfig.from_env({"SECCOMP_ENABLED": "yes"}).seccomp_enabled is True
+
+
+def test_seccomp_enabled_invalid_raises() -> None:
+    # valeur non booléenne → ValueError (fail-fast, cohérent avec _parse_int).
+    with pytest.raises(ValueError):
+        AnalysisConfig.from_env({"SECCOMP_ENABLED": "maybe"})

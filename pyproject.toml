@@ -51,5 +51,9 @@ module = "re2"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+module = "pyseccomp"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 module = "testcontainers.*"
 ignore_missing_imports = true
