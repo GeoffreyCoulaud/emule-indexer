@@ -112,7 +112,7 @@ bucketize(observations: Sequence[ObservationRow]) -> list[ObservationBucket]
 
 - `ObservationRow` (frozen) : `ed2k_hash, node_id, filename, source_count,
   complete_source_count, observed_at` (les champs nécessaires, typés).
-- `ObservationBucket` (frozen) : les **12 colonnes** de la table hormis `id`.
+- `ObservationBucket` (frozen) : les **13 colonnes** de la table hormis `id`.
 - Entrée : **toutes** les observations anciennes (au-delà de la fenêtre), triées par
   `(ed2k_hash, observed_at, id)` (le tri vient de l'orchestration §5).
 
@@ -178,8 +178,11 @@ n'est compacté qu'une fois, complet.
 
 - positionnel `source` : la `catalog.db` à compacter (absente → `CompactError` fail-fast avant
   ouverture).
-- `--output/-o` (requis) : sortie **neuve** ; refus si elle existe **sauf `--force`** (jamais de
-  truncate ; `--force` autorise un output existant, append idempotent).
+- `--output/-o` (requis) : fichier de sortie qui **ne doit pas exister** (refus sinon — **pas de
+  `--force`, pas d'append** : la compaction est une transformation *source → sortie neuve*
+  mono-source ; pour refaire, l'opérateur supprime la sortie). Idempotence = « même `source` + même
+  `cutoff_date` → même sortie » (fichier neuf et déterministe à chaque exécution ; aucune dédup à
+  l'écriture puisque la sortie est toujours vierge).
 - `--keep-recent-days N` (défaut **90**, `N >= 0` ; `0` = compacter tout l'historique).
 - `main(argv) -> int` : `0` = OK ; `2` = erreur d'usage/compaction (message clair `stderr`, jamais
   de traceback) ; aucune variable d'environnement.
@@ -240,8 +243,8 @@ sans rapport avec le choix de bucket ; c'est la compaction qui borne la croissan
   **intégralement** brut (obs du jour de coupure → côté récent) ; `clock` injecté → cutoff fixe ;
   idempotence (re-run même `cutoff_date` = no-op) ; `ROLLBACK` sur source corrompue ; triggers
   append-only actifs sur la sortie (un UPDATE/DELETE sur un bucket est refusé).
-- **`compact/__main__.py`** — safe-by-default : output neuf OK ; existant refusé / `--force` OK ;
-  source absente → `2` ; `--keep-recent-days` invalide → `2` ; défaut 90.
+- **`compact/__main__.py`** — safe-by-default : output neuf OK ; output existant refusé → `2` ;
+  source absente → `2` ; `--keep-recent-days` négatif → `2` ; défaut 90.
 - **`merge/merger.py`** — round-trip `file_observation_ranges` : union + dédup `IS` NULL-safe +
   re-merge no-op (étend les tests merge existants).
 - Pas de marqueur d'intégration : tout est I/O SQLite fichier local (comme les tests du merge).
