@@ -49,7 +49,6 @@ from emule_indexer.adapters.verifier_http import HttpContentVerifier
 from emule_indexer.application.edge_state import EdgeState
 from emule_indexer.application.port_sync_loop import PortSyncLoopDeps, port_sync_loop
 from emule_indexer.application.run_download_cycle import (
-    CatalogReader,
     DownloadLoopDeps,
     download_loop,
 )
@@ -69,7 +68,7 @@ from emule_indexer.ports.clock import Clock, Rng
 from emule_indexer.ports.content_verifier import ContentVerifier
 from emule_indexer.ports.decision_signal import DecisionSignal
 from emule_indexer.ports.mule_client import MuleClient, MuleUnreachableError
-from emule_indexer.ports.mule_download_client import DownloadEntry, MuleDownloadClient
+from emule_indexer.ports.mule_download_client import MuleDownloadClient
 from emule_indexer.ports.mule_restarter import MuleRestarter
 from emule_indexer.ports.port_forwarding import PortForwardingReader
 from emule_indexer.ports.scheduler_state_repository import SchedulerStateRepository
@@ -122,35 +121,6 @@ MetricsServer = Callable[[int, CollectorRegistry], None]
 def default_metrics_server(port: int, registry: CollectorRegistry) -> None:
     """Démarre le serveur HTTP /metrics (thread daemon). Wrapper pour fixer l'ordre des args."""
     start_http_server(port, registry=registry)  # pragma: no cover
-
-
-def resolve_staging_path(staging_base: Path, catalog: CatalogReader, entry: DownloadEntry) -> Path:
-    """Chemin du fichier complété en staging pour une entrée de file (DÉCISION DV10).
-
-    Dérive le nom du fichier de la DERNIÈRE observation du hash (le vrai layout amuled est
-    PENDING-homelab) ; si aucune observation n'a survécu, retombe sur ``staging_base/<hash>``
-    (best-effort : ce chemin échouera simplement à ``os.replace`` → ``_promote_completion``
-    laisse ``completed`` et retente, JAMAIS de crash). ``catalog`` est typé au Protocol narrow
-    ``CatalogReader`` (``application.run_download_cycle``) → ``SqliteCatalogRepository`` ET le
-    faux de test le satisfont.
-
-    Ce chemin est la SOURCE d'un ``os.replace`` dans ``quarantine.promote`` : il DOIT rester
-    confiné à ``staging_base`` (la destination, par hash, l'est déjà côté ``quarantine_fs``).
-    """
-    observation = catalog.last_observation(entry.ed2k_hash)
-    if observation is None:
-        return staging_base / entry.ed2k_hash
-    # filename = input HOSTILE (CLAUDE.md : « filenames are hostile input ») : confiner au
-    # basename pour que la SOURCE de ``os.replace`` ne puisse JAMAIS sortir de ``staging_base``
-    # (anti-traversal — ``staging_base / "/etc/passwd"`` rendrait ``/etc/passwd``, et
-    # ``staging_base / "../../etc/passwd"`` échapperait). ATTENTION : ``Path.name`` ne suffit
-    # PAS seul — ``Path("..").name == ".."`` (pas ``""`` !), donc ``staging_base / ".."``
-    # remonterait d'un cran. On rejette donc EXPLICITEMENT les noms dégénérés ``""``/``.``/``..``
-    # → fallback sur le hash (confiné, échouera proprement à ``os.replace``, retry idempotent).
-    safe_name = Path(observation.filename).name
-    if safe_name in {"", ".", ".."}:
-        return staging_base / entry.ed2k_hash
-    return staging_base / safe_name
 
 
 def _human(message: str) -> None:
@@ -390,9 +360,9 @@ class CrawlerApp:
         ``SqliteDownloadRepository`` sur la MÊME ``local_conn`` — writer unique sur l'event
         loop, aucune course). Une 2e connexion EC (``download_endpoint``) connectée en tolérant
         ``MuleUnreachableError`` (un daemon down au démarrage ne tue pas le crawler ; le backoff
-        de la boucle gouverne). ``staging_path_for`` dérive le chemin du fichier complété du
-        ``staging_dir`` configuré + le filename de la dernière observation (DÉCISION DV10 ;
-        ``None`` → chemin best-effort qui échouera à ``os.replace``, laissant ``completed``).
+        de la boucle gouverne). ``staging_dir`` est l'Incoming d'amuled configuré ; le NOM du
+        fichier complété vient désormais des fichiers PARTAGÉS EC (le vrai nom on-disk rapporté
+        par amuled — résout DV10-Q2 ; la confinement anti-traversal vit dans ``_safe_basename``).
         """
         endpoint = self._local_config.download_endpoint
         assert endpoint is not None  # garanti par _require_full_config (mypy : narrow)
@@ -414,10 +384,8 @@ class CrawlerApp:
             )
         downloads_repo = SqliteDownloadRepository(local_conn)
         quarantine = FilesystemQuarantine(Path(quarantine_dir))
-        staging_base = Path(staging_dir)
-        # ``resolve_staging_path`` est une fonction MODULE-LEVEL (unit-testée à 100 % branch,
-        # test_staging_resolver.py) — le lambda ne fait que la lier au staging + catalogue
-        # (DÉCISION DV10 ; observation None → chemin sous staging par hash, best-effort).
+        # ``staging_dir`` = l'Incoming d'amuled ; le NOM du fichier complété vient des fichiers
+        # PARTAGÉS EC (DV10-Q2 : ``_promote_completion`` bâtit ``staging_dir / <vrai nom>``).
         download_deps = DownloadLoopDeps(
             client=download_client,
             quarantine=quarantine,
@@ -426,7 +394,7 @@ class CrawlerApp:
             local=local_repo,
             targets=self._targets,
             disk_cap_bytes=download_config.disk_cap_bytes,
-            staging_path_for=lambda entry: resolve_staging_path(staging_base, catalog_repo, entry),
+            staging_dir=Path(staging_dir),
             clock=self._clock,
             telemetry=telemetry,
             signal=self._signal,

@@ -54,7 +54,7 @@ def _loop_deps(
         local=FakeLocalRepo(),
         targets=_TARGETS,
         disk_cap_bytes=1_000_000,
-        staging_path_for=lambda entry: Path("/staging") / entry.ed2k_hash,
+        staging_dir=Path("/staging"),
         clock=FakeClock(),
         telemetry=RecordingTelemetry(),
         signal=signal,

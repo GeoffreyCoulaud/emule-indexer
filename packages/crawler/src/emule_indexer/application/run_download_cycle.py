@@ -7,11 +7,13 @@ event d'arrêt) ; ``download_loop`` la répète puis attend ``poll_interval`` OU
 
 Flux d'une itération (spec §5, DÉCISION D8) :
   1. MONITOR : ``download_queue()`` → pour chaque entrée CONNUE de ``downloads``, réconcilie
-     (``downloading`` si en cours, ``completed`` si complète) ; une entrée inconnue (download
-     hors crawler) est ignorée.
-  2. COMPLÉTIONS : chaque hash ``completed`` (pas ``quarantined``) → ``quarantine.promote`` →
-     ``enqueue_verification`` → ``set_state(quarantined)``. Idempotent : ``promote`` échoue →
-     reste ``completed``, n'enfile PAS, retry au tour suivant ; déjà ``quarantined`` → sauté.
+     ``downloading`` (QUEUED→DOWNLOADING) ; une entrée inconnue (download hors crawler) est
+     ignorée. La complétion ne se déduit PLUS des octets (cf. ``_monitor``).
+  2. COMPLÉTIONS : ``shared_files()`` → chaque hash suivi présent dans les PARTAGÉS d'amuled
+     (signal POSITIF de complétion, avec le vrai nom on-disk) → ``set_state(completed)`` →
+     ``quarantine.promote(staging_dir / nom)`` → ``enqueue_verification`` → ``quarantined``.
+     Idempotent : ``promote`` échoue → reste ``completed``, n'enfile PAS, retry au tour suivant
+     (le hash reste dans les partagés) ; déjà ``quarantined``/``failed`` → sauté.
   3. CANDIDATS : ``catalog.download_decisions()`` (latest=download) ∖ ``downloads`` → pour
      chacun, ``download_policy`` (statut de la cible, dédup, plafond) → si ``download`` :
      ``build_ed2k_link`` (depuis ``last_observation``) → ``add_link`` → ``record_queued``.
@@ -25,7 +27,7 @@ JAMAIS d'abandon d'un download stallé. Déterminisme : ``Clock``/``sleep`` inje
 
 import asyncio
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,7 +47,7 @@ from emule_indexer.ports.catalog_repository import ObservedFile
 from emule_indexer.ports.clock import Clock
 from emule_indexer.ports.decision_signal import DecisionSignal
 from emule_indexer.ports.mule_client import MuleSearchFailedError, MuleUnreachableError
-from emule_indexer.ports.mule_download_client import DownloadEntry, MuleDownloadClient
+from emule_indexer.ports.mule_download_client import MuleDownloadClient
 from emule_indexer.ports.quarantine import Quarantine
 from emule_indexer.ports.repository_errors import RepositoryError
 from emule_indexer.ports.telemetry import Telemetry
@@ -56,7 +58,17 @@ _logger = logging.getLogger("emule_indexer.application.run_download_cycle")
 # le câblage du signal("download") côté producteur (pipeline) atterrit en D-verify.
 DOWNLOAD_NUDGE_SUBJECT = "download"
 
-StagingResolver = Callable[[DownloadEntry], Path]
+
+def _safe_basename(name: str) -> str | None:
+    """Basename confiné anti-traversal ; ``None`` si dégénéré (``""``/``.``/``..``).
+
+    Le nom vient d'amuled (entrée externe — défense en profondeur, cf. CLAUDE.md « filenames
+    are hostile input ») : on confine la SOURCE de ``os.replace`` à ``staging_dir``.
+    """
+    base = Path(name).name
+    if base in {"", ".", ".."}:
+        return None
+    return base
 
 
 class DownloadRepository(Protocol):
@@ -109,12 +121,14 @@ class VerificationQueue(Protocol):
 class DownloadDeps:
     """Dépendances de la boucle de download (la composition les assemble une fois).
 
-    ``staging_path_for`` mappe une entrée de file vers le chemin du fichier complété en
-    staging (DÉCISION D2 : EC n'expose pas ce chemin ; la composition de D-verify le branche
-    sur le layout amuled). ``targets`` sert au lookup ``target_id → status`` (politique pure).
-    ``catalog``/``local`` sont typés aux Protocols NARROW ci-dessus (``CatalogReader``/
-    ``VerificationQueue``) — la boucle ne dépend que du sous-ensemble lu/écrit (cohérent avec
-    le Protocol local ``DownloadRepository``), donc les fakes minimaux de test sont acceptés.
+    ``staging_dir`` est l'Incoming d'amuled (DÉCISION D2 : EC n'expose pas le chemin staging ;
+    la composition de D-verify le branche sur le layout amuled). Le NOM du fichier complété ne
+    vient plus de la file de download : il vient des fichiers PARTAGÉS EC (le vrai nom on-disk
+    rapporté par amuled), donc ``staging_path = staging_dir / <vrai nom>``. ``targets`` sert au
+    lookup ``target_id → status`` (politique pure). ``catalog``/``local`` sont typés aux Protocols
+    NARROW ci-dessus (``CatalogReader``/``VerificationQueue``) — la boucle ne dépend que du
+    sous-ensemble lu/écrit (cohérent avec le Protocol local ``DownloadRepository``), donc les
+    fakes minimaux de test sont acceptés.
     """
 
     client: MuleDownloadClient
@@ -124,7 +138,7 @@ class DownloadDeps:
     local: VerificationQueue
     targets: Sequence[TargetSegment]
     disk_cap_bytes: int
-    staging_path_for: StagingResolver
+    staging_dir: Path
     clock: Clock
     telemetry: Telemetry
 
@@ -148,26 +162,52 @@ def _target_status(targets: Sequence[TargetSegment], target_id: str) -> str:
 
 
 async def _monitor(deps: DownloadDeps, states: dict[str, DownloadState]) -> None:
-    """Réconcilie ``downloads`` avec la vraie file amuled (étape 1, spec §5)."""
+    """Réconcilie ``downloads`` avec la file amuled : QUEUED→DOWNLOADING (étape 1, spec §5).
+
+    La complétion ne se déduit PLUS des octets (PS_COMPLETE est inobservable via la file — cf.
+    docs/reference/2026-06-17-amuled-completion-behavior.md) : elle vient des fichiers partagés
+    (_handle_completions). Ici on ne fait qu'acter qu'amuled tire un download mis en file.
+    """
     queue = await deps.client.download_queue()
     for entry in queue:
         current = states.get(entry.ed2k_hash)
         if current is None:
             continue  # download hors crawler : ignoré
-        if current in {DownloadState.QUARANTINED, DownloadState.FAILED}:
-            continue  # terminal côté crawler : ne pas régresser
-        target = DownloadState.COMPLETED if entry.is_complete else DownloadState.DOWNLOADING
-        if target != current:
-            deps.downloads.set_state(entry.ed2k_hash, target)
-            states[entry.ed2k_hash] = target
+        if current in {
+            DownloadState.QUARANTINED,
+            DownloadState.FAILED,
+            DownloadState.COMPLETED,
+        }:
+            continue  # terminal / déjà complété : ne pas régresser
+        if current is not DownloadState.DOWNLOADING:
+            deps.downloads.set_state(entry.ed2k_hash, DownloadState.DOWNLOADING)
+            states[entry.ed2k_hash] = DownloadState.DOWNLOADING
 
 
-async def _promote_completion(deps: DownloadDeps, ed2k_hash: str) -> None:
-    """Promeut un hash ``completed`` → quarantaine + enqueue + ``quarantined`` (étape 2, §5)."""
-    entry = DownloadEntry(ed2k_hash=ed2k_hash, size_done=0, size_full=0)
-    staging_path = deps.staging_path_for(entry)
+async def _promote_completion(
+    deps: DownloadDeps,
+    ed2k_hash: str,
+    name: str,
+    current: DownloadState,
+    states: dict[str, DownloadState],
+) -> None:
+    """Marque ``completed`` (stampe completed_at) puis promeut → quarantaine (étape 2, §5).
+
+    Le ``staging_path`` est ``staging_dir / <vrai nom amuled>`` (résout DV10-Q2 : la dédup
+    ``nom(0)`` est gérée puisque le nom vient d'amuled). ``promote`` échoue → reste ``completed``,
+    retry au tour suivant (le hash est toujours dans les partagés — signal persistant).
+    """
+    safe = _safe_basename(name)
+    if safe is None:
+        _logger.warning(
+            "nom partagé dégénéré pour hash=%s (%r) — promotion sautée", ed2k_hash, name
+        )
+        return
+    if current is not DownloadState.COMPLETED:
+        deps.downloads.set_state(ed2k_hash, DownloadState.COMPLETED)
+        states[ed2k_hash] = DownloadState.COMPLETED
     try:
-        deps.quarantine.promote(staging_path, ed2k_hash)
+        deps.quarantine.promote(deps.staging_dir / safe, ed2k_hash)
     except Exception as error:  # noqa: BLE001 — toute panne FS laisse completed (retry idempotent)
         _logger.warning(
             "quarantaine échouée pour hash=%s (%s) — reste completed, retry", ed2k_hash, error
@@ -176,16 +216,26 @@ async def _promote_completion(deps: DownloadDeps, ed2k_hash: str) -> None:
         return
     deps.local.enqueue_verification(ed2k_hash)
     deps.downloads.set_state(ed2k_hash, DownloadState.QUARANTINED)
+    states[ed2k_hash] = DownloadState.QUARANTINED
     target_id = deps.downloads.get_target_id(ed2k_hash) or "inconnu"
     await deps.telemetry.emit(DownloadCompleted(target_id=target_id, ed2k_hash=ed2k_hash))
     _logger.info("hash=%s mis en quarantaine + vérification enfilée", ed2k_hash)
 
 
 async def _handle_completions(deps: DownloadDeps, states: dict[str, DownloadState]) -> None:
-    """Promeut chaque hash ``completed`` pas encore ``quarantined`` (étape 2, spec §5)."""
-    for ed2k_hash, state in list(states.items()):
-        if state is DownloadState.COMPLETED:
-            await _promote_completion(deps, ed2k_hash)
+    """Promeut chaque hash suivi qui apparaît dans les fichiers PARTAGÉS d'amuled (étape 2, §5).
+
+    Présence dans les partagés = complétion POSITIVE (fichier déjà déplacé/en place, auto-partagé
+    par amuled). On promeut avec le vrai nom. Les hash terminaux (quarantined/failed) sont ignorés.
+    """
+    shared = await deps.client.shared_files()
+    for entry in shared:
+        current = states.get(entry.ed2k_hash)
+        if current is None:
+            continue  # fichier partagé hors crawler : ignoré
+        if current in {DownloadState.QUARANTINED, DownloadState.FAILED}:
+            continue  # déjà promu / échoué
+        await _promote_completion(deps, entry.ed2k_hash, entry.name, current, states)
 
 
 async def _queue_new_candidates(deps: DownloadDeps) -> None:
@@ -289,6 +339,9 @@ async def run_download_cycle(deps: DownloadDeps) -> None:
     # un échec repo de l'une ne doit PAS empêcher l'autre de tourner.
     try:
         await _handle_completions(deps, states)
+    except MuleUnreachableError as error:
+        _logger.warning("daemon download injoignable (%s) — itération sautée, retry", error)
+        return
     except RepositoryError as error:
         _logger.error("complétions download en échec repo (%s) — étape sautée, continue", error)
     try:
