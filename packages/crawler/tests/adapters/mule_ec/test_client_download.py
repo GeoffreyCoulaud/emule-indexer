@@ -10,7 +10,7 @@ from emule_indexer.adapters.mule_ec.codec import (
     uint_tag,
 )
 from emule_indexer.adapters.mule_ec.errors import EcConnectError, EcFailureError
-from emule_indexer.ports.mule_download_client import DownloadEntry
+from emule_indexer.ports.mule_download_client import DownloadEntry, SharedFileEntry
 from tests.adapters.mule_ec.ec_fakes import FakeEcServer
 
 _HASH = "a1b2c3d4e5f6071829303142535465f0"
@@ -219,3 +219,81 @@ async def test_download_queue_treats_malformed_size_as_zero() -> None:
     client = _connected_client(_ScriptedTransport([EcPacket(codes.EC_OP_DLOAD_QUEUE, (entry,))]))
     queue = await client.download_queue()
     assert queue == (DownloadEntry(ed2k_hash=_HASH, size_done=0, size_full=0),)
+
+
+def _knownfile_entry(hash_hex: str, name: str) -> EcTag:
+    # Conteneur EC_TAG_KNOWNFILE (0x0400) ; valeur propre = ECID (UINT, ignoré). Le hash est
+    # l'enfant EC_TAG_PARTFILE_HASH (HASH16), le nom l'enfant EC_TAG_PARTFILE_NAME (vrai nom
+    # on-disk côté amuled). Mêmes tags enfants que le partfile (confirmé amont, commit 5938915).
+    return EcTag(
+        codes.EC_TAG_KNOWNFILE,
+        codes.EC_TAGTYPE_UINT8,
+        bytes([1]),
+        (
+            EcTag(codes.EC_TAG_PARTFILE_HASH, codes.EC_TAGTYPE_HASH16, bytes.fromhex(hash_hex), ()),
+            string_tag(codes.EC_TAG_PARTFILE_NAME, name),
+        ),
+    )
+
+
+def test_map_shared_file_extracts_hash_and_name() -> None:
+    from emule_indexer.adapters.mule_ec.client import _map_shared_file
+
+    entry = _map_shared_file(_knownfile_entry(_HASH, "Keroro 62a.avi"))
+    assert entry == SharedFileEntry(ed2k_hash=_HASH, name="Keroro 62a.avi")
+
+
+def test_map_shared_file_without_hash_is_none() -> None:
+    from emule_indexer.adapters.mule_ec.client import _map_shared_file
+
+    no_hash = EcTag(
+        codes.EC_TAG_KNOWNFILE,
+        codes.EC_TAGTYPE_UINT8,
+        b"\x01",
+        (string_tag(codes.EC_TAG_PARTFILE_NAME, "orpheline.avi"),),
+    )
+    assert _map_shared_file(no_hash) is None
+
+
+def test_map_shared_file_without_name_is_none() -> None:
+    from emule_indexer.adapters.mule_ec.client import _map_shared_file
+
+    no_name = EcTag(
+        codes.EC_TAG_KNOWNFILE,
+        codes.EC_TAGTYPE_UINT8,
+        b"\x01",
+        (EcTag(codes.EC_TAG_PARTFILE_HASH, codes.EC_TAGTYPE_HASH16, bytes.fromhex(_HASH), ()),),
+    )
+    assert _map_shared_file(no_name) is None
+
+
+def test_map_shared_file_with_wrong_length_hash_is_none() -> None:
+    from emule_indexer.adapters.mule_ec.client import _map_shared_file
+
+    bad = EcTag(
+        codes.EC_TAG_KNOWNFILE,
+        codes.EC_TAGTYPE_UINT8,
+        b"\x01",
+        (
+            EcTag(codes.EC_TAG_PARTFILE_HASH, codes.EC_TAGTYPE_HASH16, b"\x00" * 8, ()),
+            string_tag(codes.EC_TAG_PARTFILE_NAME, "x.avi"),
+        ),
+    )
+    assert _map_shared_file(bad) is None
+
+
+def test_map_shared_file_with_invalid_name_tag_is_none() -> None:
+    from emule_indexer.adapters.mule_ec.client import _map_shared_file
+
+    # name tag de type STRING mais SANS NUL terminal → string_value() lève EcProtocolError.
+    bad_name = EcTag(codes.EC_TAG_PARTFILE_NAME, codes.EC_TAGTYPE_STRING, b"no-nul", ())
+    entry = EcTag(
+        codes.EC_TAG_KNOWNFILE,
+        codes.EC_TAGTYPE_UINT8,
+        b"\x01",
+        (
+            EcTag(codes.EC_TAG_PARTFILE_HASH, codes.EC_TAGTYPE_HASH16, bytes.fromhex(_HASH), ()),
+            bad_name,
+        ),
+    )
+    assert _map_shared_file(entry) is None

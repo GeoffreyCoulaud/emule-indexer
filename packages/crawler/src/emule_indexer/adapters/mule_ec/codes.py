@@ -20,6 +20,8 @@ EC_OP_NOOP: Final[int] = 0x01
 EC_OP_ADD_LINK: Final[int] = 0x09  # ajoute un lien ed2k ; réponse NOOP
 EC_OP_GET_DLOAD_QUEUE: Final[int] = 0x0D  # requête de la file de download (détail CMD)
 EC_OP_DLOAD_QUEUE: Final[int] = 0x1F  # réponse : N enfants EC_TAG_PARTFILE
+EC_OP_GET_SHARED_FILES: Final[int] = 0x10  # requête de la liste des fichiers partagés (détail CMD)
+EC_OP_SHARED_FILES: Final[int] = 0x22  # réponse : N enfants EC_TAG_KNOWNFILE
 EC_OP_AUTH_REQ: Final[int] = 0x02
 EC_OP_AUTH_FAIL: Final[int] = 0x03
 EC_OP_AUTH_OK: Final[int] = 0x04
@@ -92,6 +94,7 @@ EC_TAG_PARTFILE_SOURCE_COUNT: Final[int] = 0x030A
 EC_TAG_PARTFILE_SOURCE_COUNT_XFER: Final[int] = 0x030D  # = sources COMPLÈTES (réf. §9 piège 12)
 EC_TAG_PARTFILE_CAT: Final[int] = 0x030F
 EC_TAG_PARTFILE_HASH: Final[int] = 0x031E
+EC_TAG_KNOWNFILE: Final[int] = 0x0400  # conteneur d'un fichier partagé/connu (réponse SHARED_FILES)
 EC_TAG_KNOWNFILE_RATING: Final[int] = 0x040F  # ✦ 3.0.0
 EC_TAG_SERVER: Final[int] = 0x0500
 EC_TAG_SERVER_NAME: Final[int] = 0x0501

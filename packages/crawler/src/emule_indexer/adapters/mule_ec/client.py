@@ -28,7 +28,7 @@ from emule_indexer.adapters.mule_ec.mapping import map_search_results
 from emule_indexer.adapters.mule_ec.transport import EcTransport, open_ec_transport
 from emule_indexer.domain.observation import FileObservation
 from emule_indexer.ports.mule_client import KadStatus, NetworkStatus, SearchChannel
-from emule_indexer.ports.mule_download_client import DownloadEntry
+from emule_indexer.ports.mule_download_client import DownloadEntry, SharedFileEntry
 
 _CLIENT_NAME = "emule-indexer"
 _CLIENT_VERSION = "0.5.0"
@@ -383,3 +383,27 @@ def _map_partfile(entry: EcTag) -> DownloadEntry | None:
         size_done=_optional_partfile_int(entry, codes.EC_TAG_PARTFILE_SIZE_DONE),
         size_full=_optional_partfile_int(entry, codes.EC_TAG_PARTFILE_SIZE_FULL),
     )
+
+
+def _map_shared_file(entry: EcTag) -> SharedFileEntry | None:
+    """Une entrée ``EC_TAG_KNOWNFILE`` → ``SharedFileEntry``, ou ``None`` si inexploitable.
+
+    Hash = enfant dédié ``EC_TAG_PARTFILE_HASH`` (HASH16, 16 octets) ; nom = enfant
+    ``EC_TAG_PARTFILE_NAME`` (le VRAI nom on-disk, ``GetFileName`` côté amuled, post-cleanup/dédup).
+    Sans hash exploitable OU sans nom → écartée (tolérance aux inconnus, comme ``_map_partfile``).
+    """
+    hash_tag = entry.find(codes.EC_TAG_PARTFILE_HASH)
+    if (
+        hash_tag is None
+        or hash_tag.tag_type != codes.EC_TAGTYPE_HASH16
+        or len(hash_tag.value) != 16
+    ):
+        return None
+    name_tag = entry.find(codes.EC_TAG_PARTFILE_NAME)
+    if name_tag is None:
+        return None
+    try:
+        name = name_tag.string_value()
+    except EcProtocolError:
+        return None
+    return SharedFileEntry(ed2k_hash=hash_tag.value.hex(), name=name)
