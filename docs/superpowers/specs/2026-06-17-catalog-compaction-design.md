@@ -44,7 +44,7 @@ idempotents, sans dépendre d'aucune frontière de plage. Stocker l'**ensemble**
 seul reproche qu'on faisait à une fenêtre (« elle perd un changement de nom ») : ici on les garde
 tous, on perd seulement *quand dans la journée* — négligeable sur du froid (> 90 j).
 
-`files`/`match_decisions`/`file_verifications`/`sources` sont **recopiées intégralement**. Seule
+`files`/`sources`/`source_observations`/`match_decisions`/`file_verifications` sont **recopiées intégralement** (tout ce qui n'est pas `file_observations` est préservé tel quel — rien n'est perdu à la reconstruction). Seule
 `file_observations` est compactée. `local.db` n'est **pas** concernée.
 
 ## 3. Modèle de données — migration `catalog/0002`
@@ -145,8 +145,10 @@ compact_catalog(source: Path, output: Path, *, keep_recent_days: int, clock: Clo
 2. `output` ouvert via `open_catalog` (migrations `0001`+`0002` → schéma + triggers).
 3. `ATTACH` de `source` (hors transaction), puis DANS une transaction explicite
    (`BEGIN`/`COMMIT`, `ROLLBACK` best-effort) :
-   a. Copier **verbatim** (ordre FK, identités d'abord) : `files`, `sources`, `match_decisions`,
-      `file_verifications`, et les `file_observation_ranges` **déjà présentes** dans la source.
+   a. Copier **verbatim** (ordre FK, identités d'abord) : `files`, `sources`, `source_observations`,
+      `match_decisions`, `file_verifications`, et les `file_observation_ranges` **déjà présentes**
+      dans la source (tout sauf `file_observations` — la compaction étant destructive par
+      reconstruction, une table non recopiée serait PERDUE ; on aligne sur le merge).
    b. Copier **verbatim** les `file_observations` **récentes** (`observed_at >= cutoff_date`).
    c. Pour les `file_observations` **anciennes** (`observed_at < cutoff_date`), lues triées par
       `(ed2k_hash, observed_at, id)` : `bucketize` (pur) → insérer les lignes de bucket.
@@ -238,7 +240,7 @@ sans rapport avec le choix de bucket ; c'est la compaction qui borne la croissan
   canoniques (ordre d'entrée indifférent) ; **node-agnostique** (observations de 2 nœuds le même
   jour → 1 bucket, `node_ids` à 2 éléments) ; bucket à une seule observation (`min=max=sum`).
 - **`compact/compactor.py`** — bases **fichier réelles** (jamais `:memory:`, contrainte WAL) :
-  copie verbatim des 5 tables intactes ; fenêtre `keep_recent_days` (récent brut conservé / ancien
+  copie verbatim des 6 tables intactes (dont `source_observations`) ; fenêtre `keep_recent_days` (récent brut conservé / ancien
   bucketisé) ; **coupure alignée jour** (§5bis) : un jour partiellement dans la fenêtre reste
   **intégralement** brut (obs du jour de coupure → côté récent) ; `clock` injecté → cutoff fixe ;
   idempotence (re-run même `cutoff_date` = no-op) ; `ROLLBACK` sur source corrompue ; triggers
@@ -270,7 +272,10 @@ sans rapport avec le choix de bucket ; c'est la compaction qui borne la croissan
   **différée à la lecture/export** (cohérent avec la dédup `file_verifications`). Append-only intact.
 - **Outil standalone, zéro touche prod** : le crawler n'importe ni ne touche `compact/` ;
   `file_observation_ranges` n'est lue/écrite que par l'outil + le merge → gate 100 % branch préservé.
-- **Hors périmètre** : `local.db` (bornée) ; `source_observations` (dormante) ; un repli de
+- **`source_observations`** (dormante, écrite par aucun code) : non *transformée* mais **recopiée
+  verbatim** comme les autres tables intactes — la compaction étant destructive par reconstruction,
+  l'omettre la perdrait dès la permutation (parité avec le merge ; trouvé par la revue holistique).
+- **Hors périmètre** : `local.db` (bornée) ; un repli de
   `last_observation` sur le rollup (follow-up conditionnel, §8) ; une surface de lecture/export qui
   recombine les buckets multi-nœuds (future, §7) ; la calibration de `keep_recent_days` / fréquence de
   crawl pour borner la fenêtre récente (réglage d'exploitation, §9).
