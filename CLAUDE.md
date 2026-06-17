@@ -15,7 +15,7 @@ The live state, history, and recommended next step are deliberately **not** in t
 - `docs/handoffs/` — one continuation guide per milestone (`<ISO date> - handoff - <context>.md`). **The newest is the entry point**: current state, what was just built, learned pitfalls, next step, and what is *not yet validated against real hardware*.
 - `docs/superpowers/specs/2026-06-10-crawler-mvp-design.md` — the authoritative MVP design (17 sections). Other dated specs in that dir record each subsystem's design + decisions; plans are in `docs/superpowers/plans/`.
 - `docs/testing-guide.md` — every test suite (unit + the integration markers), prerequisites, CI pistes.
-- `docs/runbook-deployment.md` — deploy & operate a node (compose, VPN/High-ID, clamav, metrics).
+- `docs/runbook-deployment.md` — bring a node up (compose profiles, VPN, secrets, first boot, High-ID/Low-ID); `docs/runbook-administration.md` — operate & tune one (lifecycle, optional High-ID + its risks, clamav, metrics, gVisor, catalog tools, known limits); `docs/runbook-troubleshooting.md` — symptom → cause → fix entries (any level).
 - `docs/reference/` — dated empirical findings about EC / amuled.
 - `git tag` — milestones are annotated `vX.Y.Z-<name>` (not pushed), one per subsystem.
 

@@ -9,11 +9,17 @@ Cette doc est organisée **par audience**. Choisissez votre point d'entrée :
 
 ## Opérateur / hébergeur de nœud
 
-Vous voulez **déployer et exploiter** un nœud (homelab, serveur) : monter la stack `docker compose`,
-configurer le VPN, obtenir un High-ID, activer l'analyse antivirus (clamav), exposer les métriques,
-fusionner plusieurs catalogues, valider votre config.
+Vous voulez **déployer et exploiter** un nœud (homelab, serveur). *Prérequis honnête : cela suppose
+d'être à l'aise avec un **terminal** et **Docker** (orientation Linux/serveur) ; l'état par défaut
+**Low-ID** suffit pour contribuer.*
 
-→ **[Runbook de déploiement](runbook-deployment.md)**
+- **[Runbook de déploiement](runbook-deployment.md)** — *monter* la stack `docker compose` et la voir
+  tourner : profils observer/full, VPN, secrets, premier boot, Low-ID.
+- **[Runbook d'administration](runbook-administration.md)** — *exploiter et régler* un nœud monté :
+  cycle de vie, High-ID (optionnel), analyse antivirus (clamav), métriques Prometheus, durcissement
+  gVisor, outils de catalogue (fusion/compaction/validation), limites connues.
+- **[Runbook de dépannage](runbook-troubleshooting.md)** — *résoudre un problème* concret, quel que
+  soit votre niveau : symptôme → cause → solution.
 
 ## Développeur / contributeur / CI
 

@@ -1,0 +1,209 @@
+# Runbook d'administration — emule-indexer
+
+Ce guide s'adresse à qui **exploite et règle** un nœud déjà monté. Pour *monter* la stack, commencez
+par le **[Runbook de déploiement](runbook-deployment.md)** ; pour résoudre un problème concret, le
+**[Runbook de dépannage](runbook-troubleshooting.md)**. On trouve ici le cycle de vie du nœud, le
+High-ID (optionnel), l'analyse antivirus, les métriques, le durcissement noyau, les outils de
+catalogue et les limites connues. Le sujet du catalogue reste **le fichier, jamais la personne**.
+
+---
+
+## Cycle de vie & données
+
+- **Persistance.** Le catalogue et l'état vivent dans des **volumes Docker nommés** (`catalog-db`,
+  `local-db`, `quarantine`, `amule-state`, et `clamav-db` en full). Ils **persistent** à la
+  recréation des conteneurs — ne lancez `docker compose down` **avec `-v`** que si vous voulez
+  réellement **effacer** le catalogue.
+- **Arrêter le nœud** : `docker compose --profile <observer|full> down`.
+- **Mettre à jour** : re-tirez les images puis relancez :
+  ```bash
+  docker compose --profile full pull
+  docker compose --profile full up -d
+  ```
+
+---
+
+## High-ID (optionnel) — devenir joignable
+
+Par défaut, un nœud est en **Low-ID** : il fonctionne très bien ainsi (recherche, catalogage,
+téléchargement), il est juste sous-optimal côté sources. Le **High-ID** rend la machine **joignable**
+depuis l'extérieur (plus de sources directes) ; c'est **facultatif**. Pour être joignable, il faut
+qu'un **port entrant** atteigne amuled — deux routes, selon que vous gardez ou non le VPN devant le
+trafic P2P.
+
+### Route A (recommandée) — derrière le VPN, via port forwarding
+
+gluetun sait demander un **port forwarding** à votre fournisseur VPN : le port joignable est celui du
+VPN, **tout le trafic reste derrière le tunnel**. gluetun ne l'implémente que pour **4 fournisseurs** :
+**ProtonVPN, PIA, PrivateVPN, PerfectPrivacy**. Une **boucle port-sync** lit ce port forwardé et
+l'applique à amuled automatiquement, puis redémarre amuled pour qu'il écoute dessus.
+
+Elle est **opt-in** et exige **trois réglages solidaires** :
+
+1. un fournisseur à port forwarding (ci-dessus) + `VPN_PORT_FORWARDING: "on"` dans `compose.yaml`
+   (déjà le cas) ;
+2. le service **`docker-proxy`** (profil full), qui redémarre amuled de façon confinée (le crawler ne
+   voit jamais le socket Docker) : renseignez `DOCKER_GID` dans `.env` (GID du groupe `docker` de
+   l'hôte, via `getent group docker`). **Exige un Docker rootful natif** ; **Docker Desktop et le mode
+   rootless ne fonctionnent pas** tels quels (voir le [runbook de dépannage](runbook-troubleshooting.md)
+   si le port-sync reste inopérant) ;
+3. dans `config/local.yaml` : `gluetun_control_url: "http://gluetun:8000"` +
+   `restarter_url: "http://docker-proxy:2375"`, et dans `config/crawler.yaml` la section `port_sync`
+   (présente avec ses valeurs par défaut ; réglage fin optionnel).
+
+Les **trois** doivent être présents : si un seul manque, le crawler **refuse de démarrer**
+(fail-fast). Absents → la boucle reste OFF et Low-ID est l'état normal. Une fois actif, surveillez
+les events `port-sync` / `High-ID retrouvé` dans les logs et les métriques `emule_port_*`.
+
+### Route B — ouvrir un port vous-même
+
+Si votre fournisseur ne fait pas de port forwarding, le High-ID reste atteignable en
+**ouvrant/redirigeant un port** sur votre box/routeur vers le nœud, pour que les pairs joignent amuled
+directement. C'est une option **parfaitement viable** ; le choix relève surtout de votre **tolérance
+au risque**.
+
+> #### À savoir
+> - **Légalité.** Partager une œuvre sous droit d'auteur est illégal — c'est vrai dès qu'on fait
+>   tourner un nœud, route B ou non. Ce qui distingue cet usage, ce sont les **circonstances** : eMule
+>   est, en 2026, un réseau de niche largement désuet, et la cible — des **médias perdus**,
+>   introuvables ailleurs et aux ayants droit inactifs ou introuvables — ne mobilise, en pratique,
+>   personne. Le risque concret reste donc **très faible**.
+> - **Surface d'attaque.** Un port entrant ouvert, c'est un point d'entrée de plus sur votre réseau
+>   domestique : redirigez **précisément** ce port (pas une plage) et gardez la machine à jour.
+>
+> La **route A** garde tout derrière le VPN sans ouvrir de port chez vous ; le **Low-ID**, lui,
+> convient déjà très bien.
+
+---
+
+## Analyse antivirus (clamav) — provisioning & réglage
+
+En **mode full**, le verifier ajoute une 3ᵉ source de verdict : un scan **par signatures**
+(`clamscan`) qui rend un fichier `malicious` sur match d'une base virale. C'est **activé par défaut
+dans le profil full** (`ENABLED_CHECKS: type_sniff,ffprobe,clamav` dans `compose.yaml`).
+
+**Comment la base arrive (sans casser l'isolement réseau du verifier).** Le verifier n'a **aucune
+sortie Internet** (réseau `internal: true`) — il ne peut donc pas mettre à jour la base lui-même. Un
+**sidecar `freshclam`** (service séparé sur le réseau `egress`) télécharge et tient à jour la base
+dans un **volume partagé `clamav-db`** ; le verifier le **lit en lecture seule**. L'isolement du
+verifier est préservé.
+
+- Au démarrage en full, `freshclam` fait sa **première synchronisation** (~300–500 Mo) — cela prend
+  quelques minutes. **Tant que la base n'est pas là, clamav rend `suspicious`** (défensif, jamais
+  `clean` sans base), ce qui peut mettre des fichiers en attente d'un re-scan. C'est transitoire.
+- L'image du verifier grossit de **~50–80 Mo** (le moteur `libclamav` + `clamscan` ; **pas** la base,
+  qui vit dans le volume — c'est tout l'intérêt du sidecar).
+- `clamscan` charge **toute la base en mémoire** : les rlimits du sous-processus d'analyse sont
+  **relâchés** quand clamav est actif (≈1,5 Gio d'adressage, 120 s CPU — réglables via
+  `RLIMIT_AS_BYTES_CLAMAV` / `RLIMIT_CPU_S_CLAMAV`), et le `mem_limit` du conteneur verifier est
+  relevé à **2 Gio** en conséquence (sinon l'OOM-killer du cgroup tuerait le scan avant le rlimit).
+  Si un fichier **sain** ressort systématiquement `suspicious`, le scan se fait probablement tuer :
+  augmentez ces deux valeurs.
+
+> **Désactiver clamav** : retirez `clamav` de `ENABLED_CHECKS` (le verifier retombe sur
+> `type_sniff,ffprobe`) et, si vous voulez, ne lancez pas le sidecar. Le **smoke test** et le profil
+> **observer** tournent déjà sans clamav.
+
+---
+
+## Métriques Prometheus
+
+Le crawler et le verifier exposent des métriques Prometheus.
+
+- **crawler** — sur un port HTTP dédié (`observability.metrics.port` dans `config/crawler.yaml`),
+  accessible depuis le réseau `ec`.
+- **verifier** — sur son port de service (par défaut `8000`), route `/metrics`. Comme le verifier est
+  sur un réseau **sans sortie Internet**, un Prometheus externe doit **rejoindre ce réseau** (ou vous
+  exposez le port sur l'hôte).
+
+Exemple de `scrape_config` :
+
+```yaml
+scrape_configs:
+  - job_name: 'emule-indexer-crawler'
+    static_configs:
+      - targets: ['crawler:9090']   # port configurable
+  - job_name: 'emule-indexer-verifier'
+    static_configs:
+      - targets: ['verifier:8000']  # même port que le service (/metrics)
+```
+
+---
+
+## Durcissement noyau (gVisor)
+
+```bash
+docker compose -f compose.yaml -f compose.hardening.yml --profile full up -d
+```
+
+Nécessite le runtime gVisor `runsc` enregistré sur l'hôte. **Sinon, ne chargez pas ce fichier** : la
+base est déjà durcie (non-root, capabilities retirées, rootfs en lecture seule, et le verifier sans
+aucune sortie Internet). gVisor **est** l'anneau noyau du projet — un noyau en espace utilisateur qui
+virtualise réseau + FS au niveau syscall ; il reste **opt-in** car disponible seulement sur les hôtes
+qui l'ont enregistré. La posture complète est en « Limites connues » plus bas.
+
+---
+
+## Outils de catalogue
+
+Tous ces outils sont **opérateurs et ponctuels** (pas de boucle, jamais déclenchés par le crawler) et
+**ne mutent jamais une base en place** : ils lisent une source et écrivent un fichier neuf.
+
+- **Validation de config** : `uv run python -m emule_indexer validate-config` charge + valide les 4
+  configs et sort en erreur (code ≠ 0) si l'une est invalide, **sans rien démarrer**. À lancer avant
+  un déploiement.
+- **Fusion de catalogues** : `uv run python -m emule_indexer.merge --output catalog-merged.db
+  source-a.db source-b.db …` consolide N `catalog.db` (un par chercheur/campagne) en un seul,
+  **idempotent** (re-merger est un no-op) et safe-by-default (pas d'écrasement sans `--force` ;
+  `--into <source>` pour fusionner dans une source existante).
+- **Compaction du catalogue** : `uv run python -m emule_indexer.compact catalog.db -o
+  catalog-compact.db [--keep-recent-days 90]` réduit la **seule** table qui croît sans borne,
+  `file_observations` (une ligne par fichier observé à chaque cycle). Le brut des `--keep-recent-days`
+  derniers jours (90 par défaut) est conservé tel quel ; au-delà, les observations sont **résumées en
+  un rollup journalier** node-agnostique dans `file_observation_ranges` (une ligne par fichier et par
+  **jour UTC** : ensemble des noms vus, ensemble des nœuds, min/max/somme de la disponibilité, plage
+  temporelle ; la moyenne se dérive de somme/compte). À lancer **crawler arrêté** ; il **reconstruit
+  vers une sortie neuve** (la sortie ne doit pas exister), puis l'opérateur permute. Coupure **alignée
+  sur le jour UTC** : un jour ne serait-ce que partiellement dans la fenêtre reste intégralement brut
+  (granularité au jour, pas 24 h glissantes). Ordre recommandé : **fusionner d'abord, compacter
+  ensuite** (la compaction voit alors tous les nœuds et produit une seule ligne par fichier/jour).
+  Conséquence assumée : un fichier **non vu depuis plus de `--keep-recent-days`** n'a plus
+  d'observation brute, donc `last_observation` (chemin « nom frais » du download) le rend introuvable
+  — sans incidence en pratique (un tel fichier a quasi sûrement quitté le réseau ; les fichiers
+  vivants sont ré-observés en continu). Volume au jour : ~1–6 Go/an pour une cardinalité réaliste,
+  très en deçà d'un budget de 50 Go/an.
+
+Pour valider/tester en profondeur (suites d'intégration, smoke, CI), voir le
+[guide des tests](testing-guide.md).
+
+---
+
+## Limites connues / follow-ups
+
+- **Ring noyau — posture ACTÉE (2026-06-17)** : le ring noyau par-enfant « étendu » (`net=none`,
+  bwrap/montages RO réels, tmpfs dédié) est un **non-objectif assumé**, pas un manque. Chacun exige
+  `CAP_SYS_ADMIN` (régression du `cap_drop: ALL`) ou des user namespaces non privilégiés (non
+  portables : dépendants d'un sysctl hôte, en conflit avec le seccomp par défaut de Docker, et
+  `bwrap` sous gVisor est fragile), pour un gain **marginal** face aux anneaux déjà en place (le
+  seccomp par-enfant EPERM-deny déjà les sockets ; le réseau du verifier n'a **aucun egress** via
+  `internal: true` ; le rootfs est `read_only`). **gVisor (`runsc`) EST l'anneau noyau** — noyau en
+  espace utilisateur qui virtualise réseau + FS au niveau syscall — fourni en **opt-in**
+  (`compose.hardening.yml`, voir « Durcissement noyau » plus haut). Plancher portable universel =
+  conteneur durci (`cap_drop: ALL`, `no-new-privileges`, `read_only`, `internal`) + seccomp
+  par-enfant + rlimits, sur **n'importe quel** hôte Docker ; gVisor en bolt-on pour les hôtes qui
+  supportent `runsc`. (Passer le seccomp par-enfant de blocklist à allowlist a été **écarté** : trop
+  fragile, risque de faux positifs sur un média sain.)
+- **port-sync — validation réelle** : la boucle est construite ; sa validation **bout-en-bout**
+  (port-check High-ID réel derrière le VPN) se fait via un déploiement réel.
+- **DV10 (download → quarantaine) — CONFIRMÉ par lecture de la source amont d'amuled**
+  (cf. [`docs/reference/2026-06-17-amuled-completion-behavior.md`](reference/2026-06-17-amuled-completion-behavior.md)).
+  À la complétion, amuled déplace le fichier vers son **IncomingDir** ; le statut ne passe complet
+  qu'**après** le déplacement (pas de race). Le crawler détecte la complétion par la **présence du
+  fichier dans les partagés EC** (signal positif, auto-partagé par amuled à la complétion) et promeut
+  au **vrai nom on-disk** rapporté par amuled — la collision de nom (`nom(0).ext`) est donc gérée par
+  construction. Les **contraintes de déploiement** qui en découlent (IncomingDir = quarantaine, FS
+  Linux, pas de catégories, amuled dédié) sont décrites dans le
+  [runbook de déploiement](runbook-deployment.md) (mode full). *(La suite e2e « transfert réel » qui
+  aurait validé la chaîne complète a été abandonnée — voir le guide des tests ; le décodage
+  `shared_files()` contre un vrai amuled est, lui, couvert par `download_integration`.)*
+- **WebUI / hub central / rétention** : non planifiés à ce stade.
