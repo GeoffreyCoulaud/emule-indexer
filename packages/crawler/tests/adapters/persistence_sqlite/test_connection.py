@@ -22,6 +22,7 @@ _CATALOG_TABLES = {
     "source_observations",
     "match_decisions",
     "file_verifications",
+    "file_observation_ranges",
 }
 _LOCAL_TABLES = {"node_runtime", "verification_tasks", "downloads", "scheduler_state"}
 
@@ -36,11 +37,11 @@ def _table_names(connection: sqlite3.Connection) -> set[str]:
     return {row[0] for row in rows}
 
 
-def test_open_catalog_creates_the_six_tables_and_versions_the_schema(tmp_path: Path) -> None:
+def test_open_catalog_creates_the_seven_tables_and_versions_the_schema(tmp_path: Path) -> None:
     connection = open_catalog(tmp_path / "catalog.db")
     try:
         assert _table_names(connection) == _CATALOG_TABLES
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
     finally:
         connection.close()
 
@@ -93,9 +94,9 @@ def test_reopen_is_idempotent_and_keeps_data(tmp_path: Path) -> None:
     first = open_catalog(path)
     first.execute("INSERT INTO files (ed2k_hash, size_bytes) VALUES (?, 1)", (_CANONICAL_HASH,))
     first.close()
-    second = open_catalog(path)  # version 1 déjà appliquée : AUCUN script ne rejoue
+    second = open_catalog(path)  # versions déjà appliquées : AUCUN script ne rejoue
     try:
-        assert second.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert second.execute("PRAGMA user_version").fetchone()[0] == 2
         assert second.execute("SELECT count(*) FROM files").fetchone()[0] == 1
     finally:
         second.close()
