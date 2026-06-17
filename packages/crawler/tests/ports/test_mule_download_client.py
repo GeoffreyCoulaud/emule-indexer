@@ -30,6 +30,9 @@ class _StubDownloadClient:
     async def download_queue(self) -> tuple[DownloadEntry, ...]:
         return (DownloadEntry(ed2k_hash="a" * 32, size_done=5, size_full=10),)
 
+    async def shared_files(self) -> tuple[SharedFileEntry, ...]:
+        return ()
+
     async def network_status(self) -> NetworkStatus:
         return NetworkStatus(ed2k_id=1, ed2k_high=True, kad_status=KadStatus.CONNECTED)
 

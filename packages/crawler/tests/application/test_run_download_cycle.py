@@ -16,7 +16,7 @@ from emule_indexer.ports.mule_client import (
     MuleUnreachableError,
     NetworkStatus,
 )
-from emule_indexer.ports.mule_download_client import DownloadEntry
+from emule_indexer.ports.mule_download_client import DownloadEntry, SharedFileEntry
 from emule_indexer.ports.repository_errors import RepositoryError
 from tests.application.fakes import RecordingTelemetry
 
@@ -64,6 +64,9 @@ class FakeDownloadClient:
         if self._queue_failures:
             raise self._queue_failures.pop(0)
         return self._queue.pop(0) if self._queue else ()
+
+    async def shared_files(self) -> tuple[SharedFileEntry, ...]:
+        return ()
 
     async def network_status(self) -> NetworkStatus:
         return NetworkStatus(ed2k_id=1, ed2k_high=True, kad_status=KadStatus.CONNECTED)

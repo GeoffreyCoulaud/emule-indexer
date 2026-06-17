@@ -250,6 +250,27 @@ class AmuleEcClient:
                 entries.append(entry)
         return tuple(entries)
 
+    async def shared_files(self) -> tuple[SharedFileEntry, ...]:
+        """Snapshot des fichiers PARTAGÉS d'amuled (réf. EC). NE LIT JAMAIS les octets.
+
+        Émet ``EC_OP_GET_SHARED_FILES`` au détail CMD ; la réponse ``EC_OP_SHARED_FILES`` porte
+        N enfants ``EC_TAG_KNOWNFILE`` (hash + vrai nom on-disk). Une entrée sans hash/nom
+        exploitable est ÉCARTÉE (tolérance aux inconnus, comme ``download_queue``).
+        """
+        request = EcPacket(
+            codes.EC_OP_GET_SHARED_FILES,
+            (uint_tag(codes.EC_TAG_DETAIL_LEVEL, codes.EC_DETAIL_CMD),),
+        )
+        reply = await self._request(request, codes.EC_OP_SHARED_FILES)
+        entries: list[SharedFileEntry] = []
+        for tag in reply.tags:
+            if tag.name != codes.EC_TAG_KNOWNFILE:
+                continue
+            entry = _map_shared_file(tag)
+            if entry is not None:
+                entries.append(entry)
+        return tuple(entries)
+
     async def _authenticate(self, transport: EcTransport) -> None:
         auth_req = EcPacket(
             codes.EC_OP_AUTH_REQ,

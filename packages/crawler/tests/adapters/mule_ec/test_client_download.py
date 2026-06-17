@@ -297,3 +297,61 @@ def test_map_shared_file_with_invalid_name_tag_is_none() -> None:
         ),
     )
     assert _map_shared_file(entry) is None
+
+
+@pytest.mark.asyncio
+async def test_shared_files_maps_entries() -> None:
+    reply = EcPacket(
+        codes.EC_OP_SHARED_FILES,
+        (_knownfile_entry(_HASH, "A.avi"), _knownfile_entry("b" * 32, "B.avi")),
+    )
+    client = _connected_client(_ScriptedTransport([reply]))
+    shared = await client.shared_files()
+    assert shared == (
+        SharedFileEntry(ed2k_hash=_HASH, name="A.avi"),
+        SharedFileEntry(ed2k_hash="b" * 32, name="B.avi"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_shared_files_requests_at_cmd_detail() -> None:
+    transport = _ScriptedTransport([EcPacket(codes.EC_OP_SHARED_FILES)])
+    client = _connected_client(transport)
+    await client.shared_files()
+    sent = transport.sent[0]
+    assert sent.opcode == codes.EC_OP_GET_SHARED_FILES
+    detail = sent.find(codes.EC_TAG_DETAIL_LEVEL)
+    assert detail is not None and detail.int_value() == codes.EC_DETAIL_CMD
+
+
+@pytest.mark.asyncio
+async def test_shared_files_skips_non_knownfile_top_level_tags() -> None:
+    reply = EcPacket(
+        codes.EC_OP_SHARED_FILES,
+        (string_tag(codes.EC_TAG_STRING, "bruit"), _knownfile_entry(_HASH, "A.avi")),
+    )
+    client = _connected_client(_ScriptedTransport([reply]))
+    shared = await client.shared_files()
+    assert shared == (SharedFileEntry(ed2k_hash=_HASH, name="A.avi"),)
+
+
+@pytest.mark.asyncio
+async def test_shared_files_skips_unmappable_knownfile_entries() -> None:
+    # une entrée EC_TAG_KNOWNFILE inexploitable (sans hash → _map_shared_file rend None) est
+    # ÉCARTÉE ; la suivante, valide, est conservée (tolérance aux inconnus, comme download_queue).
+    no_hash = EcTag(
+        codes.EC_TAG_KNOWNFILE,
+        codes.EC_TAGTYPE_UINT8,
+        b"\x01",
+        (string_tag(codes.EC_TAG_PARTFILE_NAME, "orpheline.avi"),),
+    )
+    reply = EcPacket(codes.EC_OP_SHARED_FILES, (no_hash, _knownfile_entry(_HASH, "A.avi")))
+    client = _connected_client(_ScriptedTransport([reply]))
+    shared = await client.shared_files()
+    assert shared == (SharedFileEntry(ed2k_hash=_HASH, name="A.avi"),)
+
+
+@pytest.mark.asyncio
+async def test_shared_files_empty_reply_is_empty_tuple() -> None:
+    client = _connected_client(_ScriptedTransport([EcPacket(codes.EC_OP_SHARED_FILES)]))
+    assert await client.shared_files() == ()

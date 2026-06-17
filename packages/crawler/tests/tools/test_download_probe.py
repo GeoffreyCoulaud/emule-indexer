@@ -3,7 +3,7 @@ import pytest
 from emule_indexer.adapters.mule_ec.client import AmuleEcClient
 from emule_indexer.adapters.mule_ec.errors import EcAuthError, EcError
 from emule_indexer.ports.mule_client import KadStatus, NetworkStatus
-from emule_indexer.ports.mule_download_client import DownloadEntry
+from emule_indexer.ports.mule_download_client import DownloadEntry, SharedFileEntry
 from emule_indexer.tools.download_probe import (
     _default_client,
     build_parser,
@@ -45,6 +45,9 @@ class FakeDownloadClient:
     async def download_queue(self) -> tuple[DownloadEntry, ...]:
         self.calls.append("download_queue")
         return self._queue
+
+    async def shared_files(self) -> tuple[SharedFileEntry, ...]:
+        return ()
 
     async def network_status(self) -> NetworkStatus:
         self.calls.append("status")

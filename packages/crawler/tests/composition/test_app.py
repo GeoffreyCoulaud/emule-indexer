@@ -24,7 +24,7 @@ from emule_indexer.domain.matching.validation import parse_matcher_config
 from emule_indexer.domain.observation import FileObservation
 from emule_indexer.ports.content_verifier import VerificationResult
 from emule_indexer.ports.mule_client import KadStatus, MuleUnreachableError, NetworkStatus
-from emule_indexer.ports.mule_download_client import DownloadEntry
+from emule_indexer.ports.mule_download_client import DownloadEntry, SharedFileEntry
 from tests.application.fakes import FakeClock, FakeMuleClient, RecordingSignal
 
 _TARGETS = (
@@ -530,6 +530,9 @@ class FakeDownloadClient(FakeMuleClient):
 
     async def download_queue(self) -> tuple[DownloadEntry, ...]:
         self.queue_calls += 1
+        return ()
+
+    async def shared_files(self) -> tuple[SharedFileEntry, ...]:
         return ()
 
 
