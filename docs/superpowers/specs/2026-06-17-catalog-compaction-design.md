@@ -139,28 +139,38 @@ Calquée sur `merge/merger.py`. **Reconstruction vers une sortie neuve**, jamais
 compact_catalog(source: Path, output: Path, *, keep_recent_days: int, clock: Clock = utc_now) -> None
 ```
 
-1. `cutoff = utc_iso(clock() - timedelta(days=keep_recent_days))` (`clock` injectable → tests
-   déterministes, comme les repositories).
+1. `cutoff_date = (clock() - timedelta(days=keep_recent_days)).date().isoformat()` — une **date**
+   `"YYYY-MM-DD"`, PAS un instant. La coupure est **alignée sur la frontière de jour UTC** (cf.
+   §5bis). `clock` injectable → tests déterministes, comme les repositories.
 2. `output` ouvert via `open_catalog` (migrations `0001`+`0002` → schéma + triggers).
 3. `ATTACH` de `source` (hors transaction), puis DANS une transaction explicite
    (`BEGIN`/`COMMIT`, `ROLLBACK` best-effort) :
    a. Copier **verbatim** (ordre FK, identités d'abord) : `files`, `sources`, `match_decisions`,
       `file_verifications`, et les `file_observation_ranges` **déjà présentes** dans la source.
-   b. Copier **verbatim** les `file_observations` **récentes** (`observed_at >= cutoff`).
-   c. Pour les `file_observations` **anciennes** (`observed_at < cutoff`), lues triées par
+   b. Copier **verbatim** les `file_observations` **récentes** (`observed_at >= cutoff_date`).
+   c. Pour les `file_observations` **anciennes** (`observed_at < cutoff_date`), lues triées par
       `(ed2k_hash, observed_at, id)` : `bucketize` (pur) → insérer les lignes de bucket.
 4. `COMMIT`, `DETACH` (hors transaction).
+
+**§5bis — coupure alignée sur le jour (jamais 24 h glissantes).** On ne compacte QUE les jours
+**entièrement** plus vieux que la fenêtre : un jour ne serait-ce que partiellement dans la fenêtre
+reste **intégralement** brut. `cutoff_date` est une date pure → « ancien » ⟺ `observed_at <
+cutoff_date`, et la comparaison lexicographique suffit (`"2026-03-19"` < `"2026-03-19T08:..."`, donc
+tout horodatage *du* jour de coupure est `>= cutoff_date` → côté récent). Garantie : chaque bucket
+`(hash, jour)` est bâti d'un seul coup à partir de **toutes** les observations du jour → **jamais de
+jour scindé, jamais de second bucket** pour un même `(hash, jour)` lors d'une passe ultérieure.
 
 SQL en **constantes Python** (cohérent `merger.py`/`catalog_repository.py` — pas de nouveau `.sql`
 hors migrations). On n'écrit **jamais** dans la source (que des SELECT). Toute `sqlite3.Error` →
 `CompactError` (fail-fast, message clair), `ROLLBACK`+`DETACH` best-effort, sortie sans compaction
 partielle.
 
-**Idempotence** : déterministe à `(source, cutoff)` donné. Re-compacter une sortie déjà compactée
-au **même cutoff** est un no-op sur le froid (les `file_observation_ranges` sont recopiées verbatim ;
-plus aucune obs ancienne à bucketiser). Un cutoff avancé (passe ultérieure) bucketise le brut
-nouvellement vieilli en **nouvelles** lignes de bucket (les buckets d'un jour déjà passé sont
-complets et stables → pas de recouvrement avec l'existant).
+**Idempotence** : déterministe à `(source, cutoff_date)` donné. Re-compacter une sortie déjà
+compactée au **même `cutoff_date`** est un no-op sur le froid (les `file_observation_ranges` sont
+recopiées verbatim ; plus aucune obs ancienne à bucketiser). Un `cutoff_date` avancé (passe
+ultérieure) bucketise les jours **nouvellement entièrement vieillis** en **nouvelles** lignes de
+bucket — sans recouvrement avec l'existant, puisque la coupure jour (§5bis) garantit qu'un jour
+n'est compacté qu'une fois, complet.
 
 ## 6. CLI (`compact/__main__.py`)
 
@@ -174,8 +184,9 @@ complets et stables → pas de recouvrement avec l'existant).
 - `main(argv) -> int` : `0` = OK ; `2` = erreur d'usage/compaction (message clair `stderr`, jamais
   de traceback) ; aucune variable d'environnement.
 
-Lancée **crawler arrêté** : `compact source -o neuf`, puis l'opérateur permute (comme le merge).
-Documenté au runbook.
+**Pas automatique** : aucune boucle, aucun déclenchement par le crawler — un outil **opérateur**,
+manuel (cron-able par l'opérateur s'il le souhaite), exactement comme le merge. Lancée **crawler
+arrêté** : `compact source -o neuf`, puis l'opérateur permute. Documenté au runbook.
 
 ## 7. Extension du merge (`merge/merger.py`)
 
@@ -225,9 +236,10 @@ sans rapport avec le choix de bucket ; c'est la compaction qui borne la croissan
   jour → 1 bucket, `node_ids` à 2 éléments) ; bucket à une seule observation (`min=max=sum`).
 - **`compact/compactor.py`** — bases **fichier réelles** (jamais `:memory:`, contrainte WAL) :
   copie verbatim des 5 tables intactes ; fenêtre `keep_recent_days` (récent brut conservé / ancien
-  bucketisé) ; `clock` injecté → cutoff fixe ; idempotence (re-run même cutoff = no-op) ; `ROLLBACK`
-  sur source corrompue ; triggers append-only actifs sur la sortie (un UPDATE/DELETE sur un bucket
-  est refusé).
+  bucketisé) ; **coupure alignée jour** (§5bis) : un jour partiellement dans la fenêtre reste
+  **intégralement** brut (obs du jour de coupure → côté récent) ; `clock` injecté → cutoff fixe ;
+  idempotence (re-run même `cutoff_date` = no-op) ; `ROLLBACK` sur source corrompue ; triggers
+  append-only actifs sur la sortie (un UPDATE/DELETE sur un bucket est refusé).
 - **`compact/__main__.py`** — safe-by-default : output neuf OK ; existant refusé / `--force` OK ;
   source absente → `2` ; `--keep-recent-days` invalide → `2` ; défaut 90.
 - **`merge/merger.py`** — round-trip `file_observation_ranges` : union + dédup `IS` NULL-safe +
@@ -246,7 +258,11 @@ sans rapport avec le choix de bucket ; c'est la compaction qui borne la croissan
 - **Politique uniforme** (Geoffrey) : pas de rétention selon le tier — l'info précieuse d'un matché
   vit dans `match_decisions`/`file_verifications`/la quarantaine, pas dans `file_observations`.
 - **`keyword` omis** (métadonnée de découverte ; analyse de productivité sur le récent non compacté).
-- **`keep_recent_days` = 90** par défaut.
+- **`keep_recent_days` = 90** par défaut, **coupure alignée sur le jour UTC** (§5bis, Geoffrey) :
+  granularité au jour, pas 24 h glissantes ; un jour partiellement dans la fenêtre reste intégralement
+  brut → jamais de jour scindé ni de double bucket.
+- **Compaction NON automatique** (Geoffrey) : outil opérateur standalone, crawler arrêté, comme le
+  merge — pas de boucle ni de déclenchement par le crawler.
 - **Merge = union-dedup, pas de combine** (§7) ; la combinaison inter-nœuds des buckets identiques est
   **différée à la lecture/export** (cohérent avec la dédup `file_verifications`). Append-only intact.
 - **Outil standalone, zéro touche prod** : le crawler n'importe ni ne touche `compact/` ;
