@@ -1,68 +1,102 @@
-# Override SMOKE (spec packaging §5) : stack assemblee SANS gluetun, sans secrets VPN.
-# amuled tourne directement sur le reseau `ec` ; le crawler vise amuled (configs tests/smoke/).
-# Volumes ephemeres (pas de persistance). Usage :
-#   docker compose -f compose.yaml -f compose.smoke.yaml --profile full up -d --build
-# Le test compose_integration (Task 5) pilote cette stack et asserte le cablage.
-
+# Stack SMOKE autonome (test compose_integration) — PAS un déploiement réel : configs tests/smoke/,
+# volumes nommés (test des perms), sans gluetun/monitoring/docker-proxy. Profils observer/download.
+# Piloté par packages/crawler/tests/integration/test_compose_smoke.py.
 services:
-  # gluetun retire du smoke : !override REMPLACE la liste de profils heritee de la base
-  # ([observer, full]) au lieu de l'etendre (les listes fusionnent par concatenation au merge).
-  # Sans ca, gluetun resterait dans observer/full et demarrerait (or il exige des secrets
-  # WireGuard + /dev/net/tun). Avec `[disabled]` (profil jamais active), il n'est JAMAIS lance.
-  gluetun:
-    profiles: !override [disabled]
-
   amuled:
-    # Plus de network_mode service:gluetun : !reset le SUPPRIME (sinon network_mode + networks
-    # sont mutuellement exclusifs au merge) => amuled rejoint directement le reseau `ec`.
-    network_mode: !reset null
+    image: ngosang/amule:3.0.0-1
+    profiles: [observer, download]
     networks:
       - ec
-    depends_on: !reset []
     environment:
       GUI_PWD: smoke-ec-password
+    volumes:
+      - amule-state:/home/amule/.aMule
+      - quarantine:/data/quarantine
+    restart: unless-stopped
 
   crawler:
-    # Le mode (observer/full) est choisi par le local.yaml monte : par defaut local.full.yaml
-    # (le test compose_integration peut re-monter local.observer.yaml a la place).
-    # !override REMPLACE entierement la liste de volumes de la base (sinon les listes fusionnent
-    # par concatenation : on heriterait le bind ./config:/app/config:ro, ramenant les vraies
-    # configs du depot et empilant des mounts fichier dans un dir RO). On monte donc UNIQUEMENT
-    # les 4 configs smoke (chemins attendus par le `command` de la base) + les volumes ephemeres.
-    volumes: !override
-      - ./tests/smoke/local.full.yaml:/app/config/local.yaml:ro
+    image: ghcr.io/geoffreycoulaud/emule-indexer-crawler:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: packages/crawler/Dockerfile
+    profiles: [observer, download]
+    user: "999:999"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+    networks:
+      ec:
+        aliases: [crawler]
+      verify-internal: {}
+      egress: {}
+    command:
+      - "--local"
+      - "/app/config/local.yaml"
+      - "--crawler"
+      - "/app/config/crawler.yaml"
+      - "--targets"
+      - "/app/config/targets.yaml"
+      - "--matcher"
+      - "/app/config/matcher.yaml"
+    volumes:
+      - ./tests/smoke/local.download.yaml:/app/config/local.yaml:ro
       - ./tests/smoke/crawler.yaml:/app/config/crawler.yaml:ro
       - ./tests/smoke/targets.yaml:/app/config/targets.yaml:ro
       - ./tests/smoke/matcher.yaml:/app/config/matcher.yaml:ro
       - quarantine:/data/quarantine
       - catalog-db:/data/catalog
       - local-db:/data/local
-    # depends_on uniquement sur amuled : le verifier n'existe QUE dans le profil `full`, donc
-    # le referencer ici casserait la validation du profil `observer` (service non defini). En
-    # full, l'ordre vis-a-vis du verifier est deja garanti par le crawler lui-meme : son
-    # health-check fail-fast du verifier au demarrage (app.py) + le restart: unless-stopped
-    # herite de la base le font reessayer jusqu'a ce que le verifier soit sain. Cette forme
-    # longue remplace (override de merge) la liste courte [amuled] heritee de la base.
-    depends_on:
-      amuled:
-        condition: service_started
+    restart: unless-stopped
 
   verifier:
-    # En smoke le verifier reste sur verify-internal ; le crawler l'atteint via ce reseau.
+    image: ghcr.io/geoffreycoulaud/emule-indexer-verifier:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: packages/verifier/Dockerfile
+    profiles: [download]
+    environment:
+      QUARANTINE_DIR: /quarantine
+      VERIFIER_HOST: 0.0.0.0
+      VERIFIER_PORT: "8000"
+      VERIFIER_CONFIG: /config/verifier.yaml
+      ENABLED_CHECKS: type_sniff,ffprobe
     volumes:
       - quarantine:/quarantine:ro
-    # clamav OFF en smoke (pas de sidecar freshclam, pas de base) : on remet le defaut sans clamav.
-    # Les maps d'environnement fusionnent par cle => cette valeur gagne sur celle de la base full.
-    # (Le verifier herite quand meme clamav-db:ro de la base, mais un volume vide jamais lu est inoffensif.)
-    environment:
-      ENABLED_CHECKS: type_sniff,ffprobe
+      - ./config/verifier.yaml:/config/verifier.yaml:ro
+    networks:
+      - verify-internal
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:8000/health').status==200 else sys.exit(1)"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    user: "999:999"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+    restart: unless-stopped
 
-  freshclam:
-    # Sidecar clamav retire du smoke (besoin d'Internet + base ~300 Mo, inutile clamav OFF) :
-    # meme mecanique que gluetun => `[disabled]` (profil jamais active) ne le lance JAMAIS.
-    profiles: !override [disabled]
+networks:
+  ec: {}
+  verify-internal:
+    internal: true
+  egress: {}
 
-  docker-proxy:
-    # Proxy de restart retire du smoke : le port-sync n'y est pas configure (le crawler ne
-    # l'appelle pas) et il monterait le socket Docker hote pour rien. `[disabled]` => jamais lance.
-    profiles: !override [disabled]
+volumes:
+  quarantine: {}
+  catalog-db: {}
+  local-db: {}
+  amule-state: {}
