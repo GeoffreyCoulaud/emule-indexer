@@ -14,11 +14,11 @@ catalogue et les limites connues. Le sujet du catalogue reste **le fichier, jama
   `local-db`, `quarantine`, `amule-state`, et `clamav-db` en full). Ils **persistent** à la
   recréation des conteneurs — ne lancez `docker compose down` **avec `-v`** que si vous voulez
   réellement **effacer** le catalogue.
-- **Arrêter le nœud** : `docker compose --profile <observer|full> down`.
+- **Arrêter le nœud** : `docker compose -f examples/<fichier> --profile <observer|download> down`.
 - **Mettre à jour** : re-tirez les images puis relancez :
   ```bash
-  docker compose --profile full pull
-  docker compose --profile full up -d
+  docker compose -f examples/<fichier> --profile download pull
+  docker compose -f examples/<fichier> --profile download up -d
   ```
 
 ---
@@ -40,16 +40,16 @@ l'applique à amuled automatiquement, puis redémarre amuled pour qu'il écoute 
 
 Elle est **opt-in** et exige **trois réglages solidaires** :
 
-1. un fournisseur à port forwarding (ci-dessus) + `VPN_PORT_FORWARDING: "on"` dans `compose.yaml`
-   (déjà le cas) ;
-2. le service **`docker-proxy`** (profil full), qui redémarre amuled de façon confinée (le crawler ne
-   voit jamais le socket Docker) : renseignez `DOCKER_GID` dans `.env` (GID du groupe `docker` de
-   l'hôte, via `getent group docker`). **Exige un Docker rootful natif** ; **Docker Desktop et le mode
-   rootless ne fonctionnent pas** tels quels (voir le [runbook de dépannage](runbook-troubleshooting.md)
-   si le port-sync reste inopérant) ;
-3. dans `config/local.yaml` : `gluetun_control_url: "http://gluetun:8000"` +
-   `restarter_url: "http://docker-proxy:2375"`, et dans `config/crawler.yaml` la section `port_sync`
-   (présente avec ses valeurs par défaut ; réglage fin optionnel).
+1. un fournisseur à port forwarding (ci-dessus) + `VPN_PORT_FORWARDING: "on"` dans `.env` ;
+2. le service **`docker-proxy`** (profil download, stack B / `examples/gluetun.yaml`), qui redémarre
+   amuled de façon confinée (le crawler ne voit jamais le socket Docker) : renseignez `DOCKER_GID`
+   dans `.env` (GID du groupe `docker` de l'hôte, via `getent group docker`). **Exige un Docker
+   rootful natif** ; **Docker Desktop et le mode rootless ne fonctionnent pas** tels quels (voir le
+   [runbook de dépannage](runbook-troubleshooting.md) si le port-sync reste inopérant) ;
+3. dans `config/crawler/download.yaml` : décommentez le bloc `port_sync` (champs
+   `gluetun_control_url: "http://gluetun:8000"` et `restarter_url: "http://docker-proxy:2375"`) ; la
+   section `port_sync` de `config/crawler/crawler.yaml` contient les valeurs par défaut (réglage fin
+   optionnel).
 
 Les **trois** doivent être présents : si un seul manque, le crawler **refuse de démarrer**
 (fail-fast). Absents → la boucle reste OFF et Low-ID est l'état normal. Une fois actif, surveillez
@@ -78,9 +78,9 @@ au risque**.
 
 ## Analyse antivirus (clamav) — provisioning & réglage
 
-En **mode full**, le verifier ajoute une 3ᵉ source de verdict : un scan **par signatures**
+En **mode download**, le verifier ajoute une 3ᵉ source de verdict : un scan **par signatures**
 (`clamscan`) qui rend un fichier `malicious` sur match d'une base virale. C'est **activé par défaut
-dans le profil full** (`ENABLED_CHECKS: type_sniff,ffprobe,clamav` dans `compose.yaml`).
+dans le profil download** (`ENABLED_CHECKS: type_sniff,ffprobe,clamav` dans `bricks/compose.core.yaml`).
 
 **Comment la base arrive (sans casser l'isolement réseau du verifier).** Le verifier n'a **aucune
 sortie Internet** (réseau `internal: true`) — il ne peut donc pas mettre à jour la base lui-même. Un
@@ -110,7 +110,7 @@ verifier est préservé.
 
 Le crawler et le verifier exposent des métriques Prometheus.
 
-- **crawler** — sur un port HTTP dédié (`observability.metrics.port` dans `config/crawler.yaml`),
+- **crawler** — sur un port HTTP dédié (`observability.metrics.port` dans `config/crawler/crawler.yaml`),
   accessible depuis le réseau `ec`.
 - **verifier** — sur son port de service (par défaut `8000`), route `/metrics`. Comme le verifier est
   sur un réseau **sans sortie Internet**, un Prometheus externe doit **rejoindre ce réseau** (ou vous
@@ -133,14 +133,15 @@ scrape_configs:
 ## Durcissement noyau (gVisor)
 
 ```bash
-docker compose -f compose.yaml -f compose.hardening.yml --profile full up -d
+CONTAINER_RUNTIME=runsc docker compose -f examples/<fichier> --profile <observer|download> up -d
 ```
 
-Nécessite le runtime gVisor `runsc` enregistré sur l'hôte. **Sinon, ne chargez pas ce fichier** : la
-base est déjà durcie (non-root, capabilities retirées, rootfs en lecture seule, et le verifier sans
-aucune sortie Internet). gVisor **est** l'anneau noyau du projet — un noyau en espace utilisateur qui
-virtualise réseau + FS au niveau syscall ; il reste **opt-in** car disponible seulement sur les hôtes
-qui l'ont enregistré. La posture complète est en « Limites connues » plus bas.
+Nécessite le runtime gVisor `runsc` enregistré sur l'hôte (**Linux uniquement**). Sans gVisor,
+omettez simplement le préfixe `CONTAINER_RUNTIME=runsc` : la base est déjà durcie (non-root,
+capabilities retirées, rootfs en lecture seule, et le verifier sans aucune sortie Internet). gVisor
+**est** l'anneau noyau du projet — un noyau en espace utilisateur qui virtualise réseau + FS au
+niveau syscall ; il reste **opt-in** car disponible seulement sur les hôtes qui l'ont enregistré.
+La posture complète est en « Limites connues » plus bas.
 
 ---
 
@@ -188,7 +189,7 @@ Pour valider/tester en profondeur (suites d'intégration, smoke, CI), voir le
   seccomp par-enfant EPERM-deny déjà les sockets ; le réseau du verifier n'a **aucun egress** via
   `internal: true` ; le rootfs est `read_only`). **gVisor (`runsc`) EST l'anneau noyau** — noyau en
   espace utilisateur qui virtualise réseau + FS au niveau syscall — fourni en **opt-in**
-  (`compose.hardening.yml`, voir « Durcissement noyau » plus haut). Plancher portable universel =
+  (knob `CONTAINER_RUNTIME=runsc`, voir « Durcissement noyau » plus haut). Plancher portable universel =
   conteneur durci (`cap_drop: ALL`, `no-new-privileges`, `read_only`, `internal`) + seccomp
   par-enfant + rlimits, sur **n'importe quel** hôte Docker ; gVisor en bolt-on pour les hôtes qui
   supportent `runsc`. (Passer le seccomp par-enfant de blocklist à allowlist a été **écarté** : trop
@@ -203,7 +204,7 @@ Pour valider/tester en profondeur (suites d'intégration, smoke, CI), voir le
   au **vrai nom on-disk** rapporté par amuled — la collision de nom (`nom(0).ext`) est donc gérée par
   construction. Les **contraintes de déploiement** qui en découlent (IncomingDir = quarantaine, FS
   Linux, pas de catégories, amuled dédié) sont décrites dans le
-  [runbook de déploiement](runbook-deployment.md) (mode full). *(La suite e2e « transfert réel » qui
+  [runbook de déploiement](runbook-deployment.md) (mode download). *(La suite e2e « transfert réel » qui
   aurait validé la chaîne complète a été abandonnée — voir le guide des tests ; le décodage
   `shared_files()` contre un vrai amuled est, lui, couvert par `download_integration`.)*
 - **WebUI / hub central / rétention** : non planifiés à ce stade.

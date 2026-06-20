@@ -36,17 +36,17 @@ The crawler is Clean/Hexagonal: `domain/` pure, `application/` async use-cases, 
 | Observability | c: `domain/observability/`, `adapters/observability/` | events → policy → dispatcher; Prometheus + apprise |
 | Port-sync (High-ID) | c: `application/` | gluetun port → EC SetPort → restart amuled |
 | Standalone catalog tools | c: `merge/`, `compact/` | `python -m emule_indexer.{merge,compact}` — N→1 fusion / daily rollup |
-| Packaging | root `compose*.yaml`, `packages/*/Dockerfile` | observer/full profiles; smoke stack; gVisor opt-in |
+| Packaging | `bricks/compose.core.yaml` + `examples/*.yaml` + `compose.smoke.yaml`, `packages/*/Dockerfile` | observer/download profiles; smoke stack; gVisor via `CONTAINER_RUNTIME` knob |
 
 ## Design invariants (do not violate)
 
 - **The catalog's subject is the file, never the person** — no tracking, no deanonymization.
 - **The crawler PROD never reads downloaded bytes.** Quarantine promotion is `os.replace` only; bytes are read solely inside the disposable verifier child. Completion is a *positive signal* (amuled's shared-files list), never byte-inference.
 - **Package boundary:** the crawler never imports `download_verifier`; the verifier never imports `emule_indexer`. Only the contract test crosses it.
-- **Two run modes:** *observer* (no `verifier_url`) is crawl-only; *full* (`verifier_url` set) wires the download + verification loops live, fail-fast on a verifier health check.
+- **Two run modes:** *observer* (no `verifier_url`) is crawl-only; *download* (`verifier_url` set) wires the download + verification loops live, fail-fast on a verifier health check.
 - **Standalone tools** (`merge`, `compact`) never touch prod code or mutate a DB in place — they read a source and write a NEW file.
 - **Boundary discipline (E-D13):** absorb failures from external I/O (apprise notifiers, the verifier RPC → degrade), but let in-process 100%-tested code crash loudly (a `PrometheusSink` failure is a bug, not a transient).
-- **Confinement posture (decided 2026-06-17):** the portable floor is container hardening (`cap_drop: ALL` / `no-new-privileges` / `read_only` / `internal`) + per-child seccomp **blocklist** + rlimits. **gVisor (`compose.hardening.yml`) IS the kernel ring**; per-child kernel namespaces and a seccomp allowlist are deliberate non-goals. See `docs/superpowers/specs/2026-06-15-ring-noyau-design.md`.
+- **Confinement posture (decided 2026-06-17):** the portable floor is container hardening (`cap_drop: ALL` / `no-new-privileges` / `read_only` / `internal`) + per-child seccomp **blocklist** + rlimits. **gVisor via `CONTAINER_RUNTIME=runsc` IS the kernel ring**; per-child kernel namespaces and a seccomp allowlist are deliberate non-goals. See `docs/superpowers/specs/2026-06-15-ring-noyau-design.md`.
 
 ## Commands
 

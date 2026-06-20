@@ -24,7 +24,7 @@ format : **symptôme → cause → solution**. Pour *monter* un nœud, voir le
   relancez ; une fois gluetun « up », redémarrez amuled : `docker compose restart amuled`.
 - **Autre cause : image amuled dérivée du pin.** Seules les versions **≥ 3.0.0** font l'auto-amorçage.
   Une image `latest` ou `2.3.3-*` casse l'amorçage du premier run **sans erreur évidente**. Gardez
-  `ngosang/amule:3.0.0-1` dans `compose.yaml`.
+  `ngosang/amule:3.0.0-1` dans le fichier `examples/` utilisé.
 
 ### Le statut « Low-ID » apparaît dans les logs
 
@@ -35,17 +35,18 @@ format : **symptôme → cause → solution**. Pour *monter* un nœud, voir le
 
 ---
 
-## Mode full (téléchargement + vérification)
+## Mode download (téléchargement + vérification)
 
-### Le crawler redémarre en boucle au démarrage (mode full)
+### Le crawler redémarre en boucle au démarrage (mode download)
 
-- **Cause.** En full, le crawler **refuse de démarrer** si le verifier ne répond pas (pas de
+- **Cause.** En mode download, le crawler **refuse de démarrer** si le verifier ne répond pas (pas de
   téléchargement sans vérification) ; son `restart: unless-stopped` le relance tant que le verifier
-  n'est pas sain.
-- **Solution.** Démarrez le verifier d'abord, puis le reste :
+  n'est pas sain — c'est le comportement attendu.
+- **Solution.** Le crawler finit par démarrer dès que le verifier est sain. Pour éviter les
+  redémarrages initiaux, démarrez le verifier d'abord, puis le reste :
   ```bash
-  docker compose --profile full up -d verifier
-  docker compose --profile full up -d
+  docker compose -f examples/<fichier> --profile download up -d verifier
+  docker compose -f examples/<fichier> --profile download up -d
   ```
 
 ### Un fichier manifestement sain ressort `suspicious`
@@ -64,10 +65,10 @@ Trois causes possibles, de la plus probable à la moins :
 
 ### Le fichier fini n'est pas récupéré (reste dans l'IncomingDir, non catalogué)
 
-- **Cause.** Une des contraintes du mode full n'est pas respectée : IncomingDir d'amuled ≠ dossier de
+- **Cause.** Une des contraintes du mode download n'est pas respectée : IncomingDir d'amuled ≠ dossier de
   quarantaine, volume sur un FS non-Linux, catégories amuled actives, ou bibliothèque partagée
   pré-existante trop grosse.
-- **Solution.** Revoyez l'encadré « Contraintes du mode full » du
+- **Solution.** Revoyez l'encadré « Contraintes du mode download » du
   [runbook de déploiement](runbook-deployment.md) (les 4 conditions).
 
 ---
@@ -89,7 +90,7 @@ Plusieurs causes, à vérifier dans cet ordre :
   (`getent group docker`).
 - **Conteneur amuled mal nommé.** Le proxy n'autorise QUE `POST .../containers/amuled/restart` : le
   conteneur doit s'appeler **exactement `amuled`** (épinglé via `container_name: amuled` dans
-  `compose.yaml`). Sous un autre nom, le restart fait **404** et le port-sync ne fait rien.
+  `examples/gluetun.yaml`). Sous un autre nom, le restart fait **404** et le port-sync ne fait rien.
 - **Fournisseur sans port forwarding.** Le High-ID exige un provider à port forwarding
   (Proton/PIA/PrivateVPN/PerfectPrivacy) et `VPN_PORT_FORWARDING: "on"`.
 

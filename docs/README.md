@@ -14,7 +14,7 @@ d'être à l'aise avec un **terminal** et **Docker** (orientation Linux/serveur)
 **Low-ID** suffit pour contribuer.*
 
 - **[Runbook de déploiement](runbook-deployment.md)** — *monter* la stack `docker compose` et la voir
-  tourner : profils observer/full, VPN, secrets, premier boot, Low-ID.
+  tourner : matrice de choix (stacks A/B/C/D), profils observer/download, secrets, premier boot, Low-ID.
 - **[Runbook d'administration](runbook-administration.md)** — *exploiter et régler* un nœud monté :
   cycle de vie, High-ID (optionnel), analyse antivirus (clamav), métriques Prometheus, durcissement
   gVisor, outils de catalogue (fusion/compaction/validation), limites connues.
