@@ -14,7 +14,7 @@
 
 - **SOURCE** — fait établi par une doc officielle Docker ou une issue acknowledged.
 - **OBSERVÉ** — constat empirique sur la machine de Geoffrey (Docker Desktop `desktop-linux`).
-- **NÔTRE** — conséquence pour notre `docker-proxy` / `compose.yaml`.
+- **NÔTRE** — conséquence pour notre `docker-proxy` / `bricks/compose.core.yaml`.
 
 ---
 
@@ -72,11 +72,11 @@ différente** de Docker Desktop (chemin + modèle d'accès, pas un re-mount `roo
 
 ## NÔTRE — conséquence pour le déploiement
 
-- Le `docker-proxy` de `compose.yaml` (`user: 65534:${DOCKER_GID}`, `-socketpath=/var/run/docker.sock`,
+- Le `docker-proxy` de `bricks/compose.core.yaml` (`user: 65534:${DOCKER_GID}`, `-socketpath=/var/run/docker.sock`,
   mount `/var/run/docker.sock:ro`) suppose le **modèle rootful natif**.
 - ⟹ le **port-sync (High-ID) ne fonctionne que sur un Docker rootful natif (Linux)**. Documenté en
   conséquence dans les runbooks (admin « Route A », dépannage « port-sync inopérant »).
-- En **observer**, et en **full sans port-sync**, **aucun socket Docker n'est touché** → Docker
+- En **observer**, et en **download sans port-sync**, **aucun socket Docker n'est touché** → Docker
   Desktop convient pour ces cas (seul le High-ID automatique est hors de portée).
 
 ---

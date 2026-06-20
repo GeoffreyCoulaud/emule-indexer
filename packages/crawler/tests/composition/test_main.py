@@ -7,13 +7,13 @@ import pytest
 from emule_indexer.composition import __main__ as entry
 from emule_indexer.composition.app import CrawlerApp
 
-_CONFIG = Path(__file__).resolve().parents[4] / "config"
+_CONFIG = Path(__file__).resolve().parents[4] / "config" / "crawler"
 
 
 def _args(**overrides: Path) -> argparse.Namespace:
     base = {
         "crawler": _CONFIG / "crawler.yaml",
-        "local": _CONFIG / "local.example.yaml",
+        "local": _CONFIG / "observer.example.yaml",
         "targets": _CONFIG / "targets.yaml",
         "matcher": _CONFIG / "matcher.yaml",
     }
@@ -110,7 +110,7 @@ def test_main_refuses_on_missing_file(tmp_path: Path, capsys: pytest.CaptureFixt
             "--crawler",
             str(tmp_path / "absent.yaml"),
             "--local",
-            str(_CONFIG / "local.example.yaml"),
+            str(_CONFIG / "observer.example.yaml"),
         ]
     )
     assert code == 1
@@ -135,12 +135,12 @@ def test_package_main_shim_reexports_main() -> None:
 
 
 def _valid_run_argv() -> list[str]:
-    """Les 4 chemins de config VALIDES versionnés (local.example.yaml fait foi du local)."""
+    """Les 4 chemins de config VALIDES versionnés (observer.example.yaml fait foi du local)."""
     return [
         "--crawler",
         str(_CONFIG / "crawler.yaml"),
         "--local",
-        str(_CONFIG / "local.example.yaml"),
+        str(_CONFIG / "observer.example.yaml"),
         "--targets",
         str(_CONFIG / "targets.yaml"),
         "--matcher",
@@ -236,7 +236,7 @@ def test_validate_config_rejects_config_error_in_crawler(
         "--crawler",
         str(bad_crawler),
         "--local",
-        str(_CONFIG / "local.example.yaml"),
+        str(_CONFIG / "observer.example.yaml"),
         "--targets",
         str(_CONFIG / "targets.yaml"),
         "--matcher",
@@ -258,7 +258,7 @@ def test_validate_config_rejects_matcher_config_error(
         "--crawler",
         str(_CONFIG / "crawler.yaml"),
         "--local",
-        str(_CONFIG / "local.example.yaml"),
+        str(_CONFIG / "observer.example.yaml"),
         "--targets",
         str(_CONFIG / "targets.yaml"),
         "--matcher",
@@ -279,7 +279,7 @@ def test_validate_config_rejects_config_error_in_targets(
         "--crawler",
         str(_CONFIG / "crawler.yaml"),
         "--local",
-        str(_CONFIG / "local.example.yaml"),
+        str(_CONFIG / "observer.example.yaml"),
         "--targets",
         str(bad_targets),
         "--matcher",

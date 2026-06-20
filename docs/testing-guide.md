@@ -133,7 +133,7 @@ conditionnels clamav `RLIMIT_AS_BYTES_CLAMAV` (défaut 1,5 Gio) / `RLIMIT_CPU_S_
 
 > **Dimensionnement des rlimits clamav (hypothèse, non testé).** Quand `clamav` est activé,
 > `clamscan` mmap toute la base de signatures : on relâche `RLIMIT_AS_BYTES_CLAMAV` à **1,5 Gio** et
-> on cale le `mem_limit` du service verifier à **2 Gio** dans `compose.yaml`. C'est un **choix
+> on cale le `mem_limit` du service verifier à **2 Gio** dans `bricks/compose.core.yaml`. C'est un **choix
 > optimiste assumé**, pas validé par un test (la calibration n'aurait de sens que contre l'image de
 > prod, pas un `clamscan` bare-metal — d'où le retrait des tests d'intégration clamav). Si, en prod,
 > un média **sain** ressort `suspicious`, le signal est de **relever `RLIMIT_AS_BYTES_CLAMAV` et le
@@ -228,9 +228,9 @@ validée.
 **sans gluetun**) démarre et se câble correctement — **aucun octet de contenu n'est téléchargé**.
 Quatre scénarios :
 1. `docker compose build` réussit (les 2 images se construisent) ;
-2. **full** : le verifier devient *healthy* (`/health` → 200) et le crawler reste *Up* ;
+2. **download** : le verifier devient *healthy* (`/health` → 200) et le crawler reste *Up* ;
 3. **observer** : le crawler démarre **sans** verifier et reste *Up* ;
-4. **full fail-fast** : crawler en mode full mais verifier **absent** → le crawler health-check le
+4. **download fail-fast** : crawler en mode download mais verifier **absent** → le crawler health-check le
    verifier au boot, échoue, et **se fige en `exited`** avec un code de sortie ≠ 0.
 
 Le smoke exerce **délibérément** le chemin de persistance réel (vrais volumes nommés
@@ -244,7 +244,7 @@ file`).
 - Les variables gluetun sont **stubées** par le test lui-même (`WIREGUARD_PRIVATE_KEY`,
   `AMULE_EC_PASSWORD`, `SERVER_COUNTRIES`) car compose les interpole au parse même si gluetun est
   désactivé — **rien à poser côté opérateur**.
-- Fichiers compose utilisés : `compose.yaml` + `compose.smoke.yaml` ; configs sous `tests/smoke/`.
+- Fichiers compose utilisés : `compose.smoke.yaml` (autonome) + overrides temporaires par scénario + `examples/*.yaml` pour `test_entrypoint_config_renders` ; configs smoke sous `tests/smoke/`.
 - Le test n'importe **aucun** module `emule_indexer` (préserve le 100 % branch du paquet).
 
 **Commande.**
@@ -252,9 +252,7 @@ file`).
 ( cd packages/crawler && uv run pytest -m compose_integration --no-cov )
 ```
 
-**Attendu.** 4 tests passés. Chaque scénario fait son `docker compose down -v` dans un `finally`
-(volumes éphémères nettoyés). Prévoir plusieurs minutes (le build + le up sont sous des timeouts de
-900 s).
+**Attendu.** 4 tests de cycle de vie + 9 cas paramétrés `test_entrypoint_config_renders` (3 points d'entrée × 3 combos de profil) = **13 tests passés**. Chaque scénario de cycle de vie fait son `docker compose down -v` dans un `finally` (volumes éphémères nettoyés). Prévoir plusieurs minutes (le build + le up sont sous des timeouts de 900 s).
 
 ---
 
