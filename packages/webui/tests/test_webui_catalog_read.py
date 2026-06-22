@@ -262,3 +262,99 @@ def test_list_files_pagination(catalog_db: Path, page: int) -> None:
         assert len(rows) == 1
     else:
         assert rows == []
+
+
+# ---------------------------------------------------------------------------
+# Tests : "dernier par hash" — tie-break sur decided_at puis id
+# ---------------------------------------------------------------------------
+
+
+def test_target_coverage_uses_latest_decision_per_hash(catalog_db: Path) -> None:
+    """Un même hash avec deux décisions (T1 < T2) → target_coverage retourne le tier de T2."""
+    h = "a" * 32
+    with sqlite3.connect(catalog_db) as conn:
+        conn.execute("INSERT INTO files (ed2k_hash, size_bytes) VALUES (?, ?)", (h, 100))
+        conn.execute(
+            "INSERT INTO match_decisions"
+            " (ed2k_hash, target_id, rule_name, tier, decided_at, node_id)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (h, "S2E062A", "rule", "catalog", "2026-06-22T10:00:00.000000+00:00", "n1"),
+        )
+        conn.execute(
+            "INSERT INTO match_decisions"
+            " (ed2k_hash, target_id, rule_name, tier, decided_at, node_id)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (h, "S2E062A", "rule", "download", "2026-06-22T11:00:00.000000+00:00", "n1"),
+        )
+        conn.commit()
+    coverage = CatalogReader(open_ro(catalog_db)).target_coverage()
+    assert coverage["S2E062A"] == [(h, "download")]
+
+
+def test_coverage_tie_break_on_id(catalog_db: Path) -> None:
+    """Même hash, même decided_at, deux tiers différents → le plus grand id gagne."""
+    h = "b" * 32
+    ts = "2026-06-22T10:00:00.000000+00:00"
+    with sqlite3.connect(catalog_db) as conn:
+        conn.execute("INSERT INTO files (ed2k_hash, size_bytes) VALUES (?, ?)", (h, 200))
+        conn.execute(
+            "INSERT INTO match_decisions"
+            " (ed2k_hash, target_id, rule_name, tier, decided_at, node_id)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (h, "S2E062A", "rule", "catalog", ts, "n1"),
+        )
+        conn.execute(
+            "INSERT INTO match_decisions"
+            " (ed2k_hash, target_id, rule_name, tier, decided_at, node_id)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (h, "S2E062A", "rule", "download", ts, "n1"),
+        )
+        conn.commit()
+    coverage = CatalogReader(open_ro(catalog_db)).target_coverage()
+    assert coverage["S2E062A"] == [(h, "download")]
+
+
+def test_list_files_shows_latest_observation(catalog_db: Path) -> None:
+    """Un même hash avec deux observations → list_files retourne le filename de la plus récente."""
+    h = "c" * 32
+    with sqlite3.connect(catalog_db) as conn:
+        conn.execute("INSERT INTO files (ed2k_hash, size_bytes) VALUES (?, ?)", (h, 300))
+        conn.execute(
+            "INSERT INTO file_observations"
+            " (ed2k_hash, filename, size_bytes, source_count,"
+            " complete_source_count, raw_meta, keyword, observed_at, node_id)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                h,
+                "old_name.avi",
+                300,
+                1,
+                0,
+                "[]",
+                "keroro",
+                "2026-06-22T09:00:00.000000+00:00",
+                "n1",
+            ),
+        )
+        conn.execute(
+            "INSERT INTO file_observations"
+            " (ed2k_hash, filename, size_bytes, source_count,"
+            " complete_source_count, raw_meta, keyword, observed_at, node_id)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                h,
+                "new_name.avi",
+                300,
+                2,
+                1,
+                "[]",
+                "keroro",
+                "2026-06-22T12:00:00.000000+00:00",
+                "n1",
+            ),
+        )
+        conn.commit()
+    reader = CatalogReader(open_ro(catalog_db))
+    rows = reader.list_files(target=None, tier=None, verdict=None, query=None, page=1)
+    assert len(rows) == 1
+    assert rows[0].filename == "new_name.avi"

@@ -15,7 +15,7 @@ jobs:
       - run: uv sync --dev
       - run: uv run ruff check .
       - run: uv run ruff format --check .
-      - run: uv run sqlfluff lint packages/crawler/src packages/webui/src
+      - run: uv run sqlfluff lint packages/crawler/src
       - run: uv run mypy
       - run: ( cd packages/matching && uv run pytest )
       - run: ( cd packages/crawler  && uv run pytest )

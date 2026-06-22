@@ -230,7 +230,7 @@ class CatalogReader:
                 ed2k_hash=row["ed2k_hash"],
                 size_bytes=row["size_bytes"],
                 filename=row["filename"] or "",
-                source_count=row["source_count"] or 0,
+                source_count=row["source_count"],
                 last_seen=row["last_seen"] or "",
                 target_id=row["target_id"],
                 tier=row["tier"],
