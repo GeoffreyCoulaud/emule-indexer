@@ -333,12 +333,14 @@ async def test_file_detail_with_decision_returns_200(
 async def test_file_detail_without_decision_returns_200(
     app_no_decision: tuple[Starlette, str],
 ) -> None:
-    """/files/{hash} sans décision → 200 (branche decision=None)."""
+    """/files/{hash} sans décision → 200, branches vides rendues."""
     app, hash_ = app_no_decision
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(f"/files/{hash_}")
     assert resp.status_code == 200
     assert "ed2k://" in resp.text
+    assert "Aucune décision de matching." in resp.text
+    assert "Aucune explication disponible." in resp.text
 
 
 @pytest.mark.asyncio
@@ -403,8 +405,10 @@ async def test_files_non_numeric_page_defaults_to_1(
 async def test_file_detail_no_observations_returns_200(
     app_no_observations: tuple[Starlette, str],
 ) -> None:
-    """/files/{hash} sans observation → 200 (branche last_obs=None, link='')."""
+    """/files/{hash} sans observation → 200 ; pas de lien ed2k, branche vide rendue."""
     app, hash_ = app_no_observations
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(f"/files/{hash_}")
     assert resp.status_code == 200
+    assert "ed2k://" not in resp.text
+    assert "Aucune observation." in resp.text

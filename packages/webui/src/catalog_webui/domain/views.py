@@ -171,14 +171,13 @@ class FileDetailDisplay:
     ``decisions`` est un tuple de 0 ou 1 élément pour permettre l'itération
     ``{% for d in file.decisions %}`` dans le template (le garde interdit {% if %}).
     ``explanation_notes`` est vide si aucune explication, contenant un seul élément
-    sinon — permet l'itération conditionnelle sans {% if %}.
+    (la note textuelle) sinon — permet l'itération conditionnelle sans {% if %}.
     """
 
     ed2k_hash: str
     size_bytes: int
     aich_hash_display: str  # aich_hash ou "—"
     observations: tuple[ObservationRow, ...]
-    decision: DecisionView | None
     decisions: tuple[DecisionView, ...]  # 0 ou 1 élément — pour l'itération template
     verifications: tuple[VerificationRow, ...]
     ed2k_link: str  # précalculé depuis la dernière observation
@@ -186,5 +185,4 @@ class FileDetailDisplay:
     explanation_target_id: str | None
     explanation_rules_fired: tuple[str, ...]
     explanation_tokens_matched: tuple[str, ...]
-    explanation_config_note: str  # "Évalué contre la configuration actuelle" ou ""
-    explanation_notes: tuple[str, ...]  # 0 ou 1 élément — pour l'itération template
+    explanation_notes: tuple[str, ...]  # 0 ou 1 élément — la note textuelle elle-même

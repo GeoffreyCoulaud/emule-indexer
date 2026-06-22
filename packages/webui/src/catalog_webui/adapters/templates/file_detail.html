@@ -38,7 +38,7 @@
 <section>
   <h2>Explication</h2>
   {% for note in file.explanation_notes %}
-  <p>{{ file.explanation_config_note }}</p>
+  <p>{{ note }}</p>
   <p>Cible : {{ file.explanation_target_id }}</p>
   <p>Règles déclenchées :</p>
   <ul>
@@ -67,7 +67,6 @@
         <th>Sources</th>
         <th>Mot-clé</th>
         <th>Observé le</th>
-        <th>Nœud</th>
       </tr>
     </thead>
     <tbody>
@@ -78,10 +77,9 @@
         <td>{{ obs.source_count }}</td>
         <td>{{ obs.keyword }}</td>
         <td>{{ obs.observed_at }}</td>
-        <td>{{ obs.node_id }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="6">Aucune observation.</td></tr>
+      <tr><td colspan="5">Aucune observation.</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -94,7 +92,6 @@
       <tr>
         <th>Verdict</th>
         <th>Vérifié le</th>
-        <th>Nœud</th>
       </tr>
     </thead>
     <tbody>
@@ -102,10 +99,9 @@
       <tr>
         <td>{{ ver.verdict }}</td>
         <td>{{ ver.verified_at }}</td>
-        <td>{{ ver.node_id }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="3">Aucune vérification.</td></tr>
+      <tr><td colspan="2">Aucune vérification.</td></tr>
       {% endfor %}
     </tbody>
   </table>

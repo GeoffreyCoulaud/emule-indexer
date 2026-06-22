@@ -5,6 +5,7 @@ toutes les routes. Les handlers sont des fermetures capturant les dépendances
 — pas de ``app.state``.
 """
 
+import contextlib
 from pathlib import Path
 
 from starlette.applications import Starlette
@@ -39,7 +40,7 @@ def build_app(
 ) -> Starlette:
     """Construit et retourne l'application Starlette câblée."""
 
-    templates = Jinja2Templates(directory=str(templates_dir))
+    templates = Jinja2Templates(directory=templates_dir)
     target_segments = load_targets(targets)
     explainer = MatchingExplainer(matcher_yaml=matcher, targets_yaml=targets)
 
@@ -54,10 +55,12 @@ def build_app(
         return JSONResponse({"status": "ok"})
 
     async def handle_dashboard(request: Request) -> Response:
-        catalog = CatalogReader(open_ro(catalog_db))
-        coverage_data = catalog.target_coverage()
-        local = LocalReader(open_ro(local_db))
-        node_state = local.node_state()
+        with contextlib.closing(open_ro(catalog_db)) as catalog_conn:
+            catalog = CatalogReader(catalog_conn)
+            coverage_data = catalog.target_coverage()
+        with contextlib.closing(open_ro(local_db)) as local_conn:
+            local = LocalReader(local_conn)
+            node_state = local.node_state()
 
         rows = []
         for seg in target_segments:
@@ -90,14 +93,15 @@ def build_app(
         except ValueError:
             page = 1
 
-        catalog = CatalogReader(open_ro(catalog_db))
-        file_rows = catalog.list_files(
-            target=target_param,
-            tier=tier_param,
-            verdict=verdict_param,
-            query=query_param,
-            page=page,
-        )
+        with contextlib.closing(open_ro(catalog_db)) as catalog_conn:
+            catalog = CatalogReader(catalog_conn)
+            file_rows = catalog.list_files(
+                target=target_param,
+                tier=tier_param,
+                verdict=verdict_param,
+                query=query_param,
+                page=page,
+            )
 
         display_rows = [
             FileRowDisplay(
@@ -124,8 +128,9 @@ def build_app(
     async def handle_file_detail(request: Request) -> Response:
         ed2k_hash = request.path_params["ed2k_hash"]
 
-        catalog = CatalogReader(open_ro(catalog_db))
-        detail = catalog.file_detail(ed2k_hash)
+        with contextlib.closing(open_ro(catalog_db)) as catalog_conn:
+            catalog = CatalogReader(catalog_conn)
+            detail = catalog.file_detail(ed2k_hash)
 
         if detail is None:
             return PlainTextResponse("Not Found", status_code=404)
@@ -141,7 +146,7 @@ def build_app(
         explanation_target_id: str | None = None
         explanation_rules_fired: tuple[str, ...] = ()
         explanation_tokens_matched: tuple[str, ...] = ()
-        explanation_config_note: str = ""
+        explanation_notes: tuple[str, ...] = ()
 
         if detail.decision is not None and last_obs is not None:
             explanation = explainer.explain(
@@ -155,24 +160,21 @@ def build_app(
                 explanation_target_id = explanation.target_id
                 explanation_rules_fired = explanation.rules_fired
                 explanation_tokens_matched = explanation.tokens_matched
-                explanation_config_note = "Évalué contre la configuration actuelle"
+                explanation_notes = ("Évalué contre la configuration actuelle",)
 
         decisions = (detail.decision,) if detail.decision is not None else ()
-        explanation_notes = (explanation_config_note,) if explanation_config_note else ()
 
         display = FileDetailDisplay(
             ed2k_hash=detail.ed2k_hash,
             size_bytes=detail.size_bytes,
             aich_hash_display=detail.aich_hash if detail.aich_hash is not None else "—",
             observations=detail.observations,
-            decision=detail.decision,
             decisions=decisions,
             verifications=detail.verifications,
             ed2k_link=link,
             explanation_target_id=explanation_target_id,
             explanation_rules_fired=explanation_rules_fired,
             explanation_tokens_matched=explanation_tokens_matched,
-            explanation_config_note=explanation_config_note,
             explanation_notes=explanation_notes,
         )
 
@@ -184,14 +186,15 @@ def build_app(
 
     async def handle_target(request: Request) -> Response:
         target_id = request.path_params["target_id"]
-        catalog = CatalogReader(open_ro(catalog_db))
-        file_rows = catalog.list_files(
-            target=target_id,
-            tier=None,
-            verdict=None,
-            query=None,
-            page=1,
-        )
+        with contextlib.closing(open_ro(catalog_db)) as catalog_conn:
+            catalog = CatalogReader(catalog_conn)
+            file_rows = catalog.list_files(
+                target=target_id,
+                tier=None,
+                verdict=None,
+                query=None,
+                page=1,
+            )
 
         display_rows = [
             FileRowDisplay(
@@ -216,8 +219,9 @@ def build_app(
         )
 
     async def handle_node(request: Request) -> Response:
-        local = LocalReader(open_ro(local_db))
-        node_state = local.node_state()
+        with contextlib.closing(open_ro(local_db)) as local_conn:
+            local = LocalReader(local_conn)
+            node_state = local.node_state()
 
         return templates.TemplateResponse(
             request,
@@ -237,6 +241,6 @@ def build_app(
             Route("/files/{ed2k_hash}", handle_file_detail),
             Route("/targets/{target_id}", handle_target),
             Route("/node", handle_node),
-            Mount("/static", StaticFiles(directory=str(static_dir))),
+            Mount("/static", StaticFiles(directory=static_dir)),
         ]
     )
