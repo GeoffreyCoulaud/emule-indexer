@@ -2,23 +2,29 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from catalog_matching.engine import MatchingEngine
 from catalog_matching.models import FileCandidate
 from catalog_matching.validation import parse_matcher_config, parse_targets
-from emule_indexer.adapters.config.yaml_loader import load_yaml
 
 _FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 def _engine() -> MatchingEngine:
-    config = parse_matcher_config(load_yaml(_FIXTURES / "canonical_config.yaml"))
-    targets = parse_targets(load_yaml(_FIXTURES / "canonical_targets.yaml"))
+    config = parse_matcher_config(
+        yaml.safe_load((_FIXTURES / "canonical_config.yaml").read_text(encoding="utf-8"))
+    )
+    targets = parse_targets(
+        yaml.safe_load((_FIXTURES / "canonical_targets.yaml").read_text(encoding="utf-8"))
+    )
     return MatchingEngine(config, targets)
 
 
 def _corpus_cases() -> list[dict[str, Any]]:
-    raw = load_yaml(_FIXTURES / "golden_corpus.yaml")
+    raw: dict[str, Any] = yaml.safe_load(
+        (_FIXTURES / "golden_corpus.yaml").read_text(encoding="utf-8")
+    )
     cases = raw["cases"]
     assert isinstance(cases, list)
     return [dict(case) for case in cases]

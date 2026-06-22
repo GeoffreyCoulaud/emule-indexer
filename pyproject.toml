@@ -40,14 +40,14 @@ python_version = "3.12"
 strict = true
 # Stratégie de résolution des noms de modules dans le workspace :
 # - `packages/crawler/tests/` a un `__init__.py` (imports `from tests.…` internes) → paquet `tests`
-# - `packages/verifier/tests/` et `packages/matching/tests/` n'ont PAS de `__init__.py`.
-# Pour éviter la collision entre verifier et matching sur les noms de fichiers (ex. `test_config`),
-# les tests matching sont couverts via mypy par-paquet (`cd packages/matching && uv run mypy`).
-# Le scan racine inclut seulement les tests du crawler (avec __init__.py) + verifier (sans).
+# - `packages/verifier/tests/` et `packages/matching/tests/` n'ont PAS de `__init__.py` → modules plats.
+# Les noms de fichiers de tests plats (verifier + matching) doivent être uniques pour éviter les
+# collisions mypy (ex. `test_config` → renommé `test_matcher_config` côté matching).
 files = [
   "packages/crawler/src",
   "packages/crawler/tests",
   "packages/matching/src",
+  "packages/matching/tests",
   "packages/verifier/src",
   "packages/verifier/tests",
 ]
