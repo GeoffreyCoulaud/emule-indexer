@@ -1,6 +1,7 @@
 """View-models PRÉCALCULÉS (spec webui W-D8) : les templates n'itèrent et n'interpolent
 que ces champs — aucune logique côté template."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 
@@ -80,3 +81,42 @@ class FileDetail:
     observations: tuple[ObservationRow, ...]
     decision: DecisionView | None  # None si aucune décision
     verifications: tuple[VerificationRow, ...]
+
+
+# ---------------------------------------------------------------------------
+# État du nœud (local.db)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class DownloadRow:
+    """Un téléchargement actif ou terminé (table downloads)."""
+
+    ed2k_hash: str
+    target_id: str
+    state: str
+    queued_at: str
+    completed_at: str | None
+    size_bytes: int
+
+
+@dataclass(frozen=True)
+class VerifTaskRow:
+    """Une tâche de vérification (table verification_tasks)."""
+
+    ed2k_hash: str
+    status: str
+    attempts: int
+    enqueued_at: str
+    lease_until: str | None
+
+
+@dataclass(frozen=True)
+class NodeState:
+    """État complet du nœud : téléchargements, vérifications, scheduler, identité."""
+
+    downloads: tuple[DownloadRow, ...]
+    verification_tasks: tuple[VerifTaskRow, ...]
+    scheduler: Mapping[str, str]  # toutes les paires de scheduler_state
+    node_id: str | None  # None si absent de node_runtime
+    created_at: str | None  # None si absent de node_runtime
