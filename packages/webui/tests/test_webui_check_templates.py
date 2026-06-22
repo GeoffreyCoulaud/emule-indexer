@@ -120,3 +120,15 @@ def test_main_exits_1_when_violations(tmp_path: Path, capsys: pytest.CaptureFixt
     assert exc_info.value.code == 1
     out = capsys.readouterr().out
     assert "bad.html" in out
+
+
+def test_main_exits_with_usage_when_no_arg(capsys: pytest.CaptureFixture[str]) -> None:
+    """main() sans argument affiche un message d'usage et sort avec un code non-0."""
+    with (
+        patch("sys.argv", ["check_templates"]),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        from catalog_webui._dev.check_templates import main
+
+        main()
+    assert exc_info.value.code != 0

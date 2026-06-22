@@ -66,4 +66,16 @@
     </tbody>
   </table>
 </section>
+
+<section>
+  <h2>Ordonnancement</h2>
+  <dl>
+    {% for entry in scheduler_entries %}
+    <dt>{{ entry.key }}</dt>
+    <dd>{{ entry.value }}</dd>
+    {% else %}
+    <dd>Aucune entrée d'ordonnancement.</dd>
+    {% endfor %}
+  </dl>
+</section>
 {% endblock %}

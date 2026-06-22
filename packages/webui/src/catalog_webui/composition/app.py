@@ -10,7 +10,7 @@ from pathlib import Path
 
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse, PlainTextResponse, Response
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
@@ -25,6 +25,7 @@ from catalog_webui.domain.format import ed2k_link, short_hash
 from catalog_webui.domain.views import (
     FileDetailDisplay,
     FileRowDisplay,
+    SchedulerEntry,
     TargetCoverageRow,
 )
 
@@ -133,7 +134,7 @@ def build_app(
             detail = catalog.file_detail(ed2k_hash)
 
         if detail is None:
-            return PlainTextResponse("Not Found", status_code=404)
+            return templates.TemplateResponse(request, "404.html", {}, status_code=404)
 
         # Précalcul du lien eD2k depuis la dernière observation
         last_obs = detail.observations[-1] if detail.observations else None
@@ -152,8 +153,8 @@ def build_app(
             explanation = explainer.explain(
                 filename=last_obs.filename,
                 size_bytes=last_obs.size_bytes,
-                media_length_sec=None,
-                bitrate_kbps=None,
+                media_length_sec=last_obs.media_length_sec,
+                bitrate_kbps=last_obs.bitrate_kbps,
                 target_id=detail.decision.target_id,
             )
             if explanation is not None:
@@ -223,10 +224,14 @@ def build_app(
             local = LocalReader(local_conn)
             node_state = local.node_state()
 
+        scheduler_entries = tuple(
+            SchedulerEntry(key=k, value=v) for k, v in node_state.scheduler.items()
+        )
+
         return templates.TemplateResponse(
             request,
             "node.html",
-            {"node_state": node_state},
+            {"node_state": node_state, "scheduler_entries": scheduler_entries},
         )
 
     # ------------------------------------------------------------------

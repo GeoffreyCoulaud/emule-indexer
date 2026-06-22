@@ -22,7 +22,6 @@ def load_targets(path: Path) -> tuple[TargetSegment, ...]:
         OSError: si le fichier est illisible ou inexistant.
         ConfigError: si la racine YAML n'est pas un mapping ou si ``parse_targets``
             détecte une erreur de schéma/sémantique.
-        ValueError: si la racine parsée n'est pas un dict (YAML non-mapping).
     """
     raw_text = path.read_text(encoding="utf-8")
     raw = yaml.safe_load(raw_text)

@@ -314,6 +314,50 @@ def test_coverage_tie_break_on_id(catalog_db: Path) -> None:
     assert coverage["S2E062A"] == [(h, "download")]
 
 
+def test_file_detail_observations_include_media_fields_none(catalog_db: Path) -> None:
+    """ObservationRow.media_length_sec et bitrate_kbps sont None quand absents du SELECT."""
+    _seed(catalog_db)
+    detail = CatalogReader(open_ro(catalog_db)).file_detail("a" * 32)
+    assert detail is not None
+    assert len(detail.observations) == 1
+    obs = detail.observations[0]
+    assert obs.media_length_sec is None
+    assert obs.bitrate_kbps is None
+
+
+def test_file_detail_observations_include_media_fields_present(catalog_db: Path) -> None:
+    """ObservationRow.media_length_sec et bitrate_kbps sont remplis quand présents."""
+    h = "d" * 32
+    with sqlite3.connect(catalog_db) as conn:
+        conn.execute("INSERT INTO files (ed2k_hash, size_bytes) VALUES (?, ?)", (h, 150))
+        conn.execute(
+            "INSERT INTO file_observations"
+            " (ed2k_hash, filename, size_bytes, source_count, complete_source_count,"
+            " media_length_sec, bitrate_kbps, raw_meta, keyword, observed_at, node_id)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                h,
+                "keroro_media.avi",
+                150,
+                3,
+                1,
+                1320,
+                192,
+                "[]",
+                "keroro",
+                "2026-06-22T10:00:00.000000+00:00",
+                "n1",
+            ),
+        )
+        conn.commit()
+    detail = CatalogReader(open_ro(catalog_db)).file_detail(h)
+    assert detail is not None
+    assert len(detail.observations) == 1
+    obs = detail.observations[0]
+    assert obs.media_length_sec == 1320
+    assert obs.bitrate_kbps == 192
+
+
 def test_list_files_shows_latest_observation(catalog_db: Path) -> None:
     """Un même hash avec deux observations → list_files retourne le filename de la plus récente."""
     h = "c" * 32

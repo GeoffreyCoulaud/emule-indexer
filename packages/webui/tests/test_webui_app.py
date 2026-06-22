@@ -412,3 +412,111 @@ async def test_file_detail_no_observations_returns_200(
     assert resp.status_code == 200
     assert "ed2k://" not in resp.text
     assert "Aucune observation." in resp.text
+
+
+@pytest.mark.asyncio
+async def test_base_nav_uses_singular_node_href(
+    populated_app: tuple[Starlette, str],
+) -> None:
+    """La nav de base contient href="/node" (singulier) et PAS href="/nodes"."""
+    app, _ = populated_app
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/")
+    assert resp.status_code == 200
+    assert 'href="/node"' in resp.text
+    assert 'href="/nodes"' not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_node_page_renders_scheduler_state(
+    populated_app: tuple[Starlette, str],
+) -> None:
+    """/node → la clé last_search_cycle du scheduler_state apparaît dans le HTML."""
+    app, _ = populated_app
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/node")
+    assert resp.status_code == 200
+    assert "last_search_cycle" in resp.text
+
+
+@pytest.fixture
+def app_with_media_obs(catalog_db: Path, local_db: Path, tmp_path: Path) -> tuple[Starlette, str]:
+    """Fichier avec observation ayant media_length_sec et bitrate_kbps non-null."""
+    with sqlite3.connect(catalog_db) as conn:
+        conn.execute(
+            "INSERT INTO files VALUES (?, ?, ?)",
+            (TEST_HASH, 100_000_000, None),
+        )
+        conn.execute(
+            "INSERT INTO file_observations VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                TEST_HASH,
+                "keroro_s2e62a_vf.avi",
+                100_000_000,
+                5,
+                3,
+                1320,  # media_length_sec = 22 minutes
+                192,  # bitrate_kbps
+                None,
+                None,
+                "{}",
+                "keroro",
+                "2024-01-01T00:00:00",
+                "node1",
+            ),
+        )
+        conn.execute(
+            "INSERT INTO match_decisions VALUES (1, ?, ?, ?, ?, ?, ?)",
+            (TEST_HASH, "S2E062A", "catalog", "catalog", "2024-01-01T00:00:00", "node1"),
+        )
+        conn.commit()
+
+    with sqlite3.connect(local_db) as conn:
+        conn.execute("INSERT INTO node_runtime VALUES (?, ?)", ("node_id", "node-media"))
+        conn.execute(
+            "INSERT INTO node_runtime VALUES (?, ?)", ("created_at", "2024-01-01T00:00:00")
+        )
+        conn.commit()
+
+    targets_path = _write_targets_yaml(tmp_path)
+    matcher_path = _write_matcher_yaml(tmp_path)
+
+    import catalog_webui
+
+    templates_dir = Path(catalog_webui.__file__).parent / "adapters" / "templates"
+    static_dir = Path(catalog_webui.__file__).parent / "adapters" / "static"
+
+    app = build_app(
+        catalog_db=catalog_db,
+        local_db=local_db,
+        targets=targets_path,
+        matcher=matcher_path,
+        templates_dir=templates_dir,
+        static_dir=static_dir,
+    )
+    return app, TEST_HASH
+
+
+@pytest.mark.asyncio
+async def test_file_detail_with_media_fields_returns_200(
+    app_with_media_obs: tuple[Starlette, str],
+) -> None:
+    """/files/{hash} avec media_length_sec + bitrate_kbps → 200, explication calculée."""
+    app, hash_ = app_with_media_obs
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(f"/files/{hash_}")
+    assert resp.status_code == 200
+    assert "S2E062A" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_file_detail_unknown_hash_returns_styled_404(
+    populated_app: tuple[Starlette, str],
+) -> None:
+    """/files/{hash} inexistant → 404 avec le template HTML stylé (contient 'introuvable')."""
+    app, _ = populated_app
+    unknown = "00000000000000000000000000000000"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(f"/files/{unknown}")
+    assert resp.status_code == 404
+    assert "introuvable" in resp.text.lower()

@@ -61,6 +61,8 @@ class ObservationRow:
     size_bytes: int
     source_count: int
     complete_source_count: int
+    media_length_sec: int | None
+    bitrate_kbps: int | None
     keyword: str
     observed_at: str
     node_id: str
@@ -125,6 +127,14 @@ class VerifTaskRow:
     attempts: int
     enqueued_at: str
     lease_until: str | None
+
+
+@dataclass(frozen=True)
+class SchedulerEntry:
+    """Une paire clé/valeur du scheduler (précalculée pour le template)."""
+
+    key: str
+    value: str
 
 
 @dataclass(frozen=True)

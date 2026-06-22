@@ -121,7 +121,7 @@ def _explain(
     resolved: ResolvedTarget,
     candidate: FileCandidate,
 ) -> Explanation:
-    """Construit l'explication de la cible GAGNANTE (cf. spec §8.5).
+    """Construit l'explication de la cible résolue ``resolved`` (cf. spec §8.5).
 
     ``rules_fired`` : règles vraies dans l'ordre de la config. ``tokens_matched`` : tokens
     nommés qui matchent (triés). ``coverage_values`` : ``(nom, value)`` des tokens coverage

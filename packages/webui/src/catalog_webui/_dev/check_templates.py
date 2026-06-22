@@ -71,6 +71,8 @@ def find_logic_violations(directory: Path) -> list[str]:
 
 def main() -> None:
     """Point d'entrée CLI : ``python -m catalog_webui._dev.check_templates <directory>``."""
+    if len(sys.argv) < 2:
+        sys.exit("usage: check_templates <dir>")
     directory = Path(sys.argv[1])
     violations = find_logic_violations(directory)
     if violations:

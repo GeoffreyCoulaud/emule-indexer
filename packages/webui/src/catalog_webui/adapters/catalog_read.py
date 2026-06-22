@@ -2,8 +2,8 @@
 
 ``CatalogReader`` expose trois lectures :
 
-- ``target_coverage()`` — par ``target_id``, liste ``(ed2k_hash, tier)`` du DERNIER
-  verdict de chaque fichier (fenêtre ROW_NUMBER PARTITION BY ed2k_hash).
+- ``target_coverage()`` — par ``target_id``, liste ``(ed2k_hash, tier)`` de la DERNIÈRE
+  décision de matching de chaque fichier (fenêtre ROW_NUMBER PARTITION BY ed2k_hash).
 - ``list_files()`` — explorateur filtré paginé (fichiers ⨝ dernière observation ⨝
   dernière décision ⨝ dernier verdict, filtres optionnels + LIMIT/OFFSET).
 - ``file_detail()`` — toutes les observations + dernière décision + tous les verdicts
@@ -107,6 +107,8 @@ SELECT
     size_bytes,
     source_count,
     complete_source_count,
+    media_length_sec,
+    bitrate_kbps,
     keyword,
     observed_at,
     node_id
@@ -166,7 +168,7 @@ class CatalogReader:
 
     def target_coverage(self) -> dict[str, list[tuple[str, str]]]:
         """Retourne pour chaque ``target_id`` la liste ``(ed2k_hash, tier)``
-        du DERNIER verdict de matching de chaque fichier.
+        de la DERNIÈRE décision de matching de chaque fichier.
         """
         rows = self._conn.execute(_SQL_COVERAGE).fetchall()
         result: dict[str, list[tuple[str, str]]] = {}
@@ -274,6 +276,8 @@ class CatalogReader:
                     size_bytes=row["size_bytes"],
                     source_count=row["source_count"],
                     complete_source_count=row["complete_source_count"],
+                    media_length_sec=row["media_length_sec"],
+                    bitrate_kbps=row["bitrate_kbps"],
                     keyword=row["keyword"],
                     observed_at=row["observed_at"],
                     node_id=row["node_id"],
