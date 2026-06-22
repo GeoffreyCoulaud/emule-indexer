@@ -20,3 +20,4 @@ jobs:
       - run: ( cd packages/matching && uv run pytest )
       - run: ( cd packages/crawler  && uv run pytest )
       - run: ( cd packages/verifier && uv run pytest )
+      - run: ( cd packages/webui    && uv run pytest )

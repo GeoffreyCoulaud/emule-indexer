@@ -5,12 +5,14 @@ members = ["packages/*"]
 emule-indexer = { workspace = true }
 download-verifier = { workspace = true }
 catalog-matching = { workspace = true }
+catalog-webui = { workspace = true }
 
 [dependency-groups]
 dev = [
   "emule-indexer",
   "download-verifier",
   "catalog-matching",
+  "catalog-webui",
   "pytest>=8",
   "pytest-cov>=5",
   "pytest-asyncio>=1.2",
@@ -30,6 +32,8 @@ src = [
   "packages/matching/tests",
   "packages/verifier/src",
   "packages/verifier/tests",
+  "packages/webui/src",
+  "packages/webui/tests",
 ]
 
 [tool.ruff.lint]
@@ -40,9 +44,10 @@ python_version = "3.12"
 strict = true
 # Stratégie de résolution des noms de modules dans le workspace :
 # - `packages/crawler/tests/` a un `__init__.py` (imports `from tests.…` internes) → paquet `tests`
-# - `packages/verifier/tests/` et `packages/matching/tests/` n'ont PAS de `__init__.py` → modules plats.
-# Les noms de fichiers de tests plats (verifier + matching) doivent être uniques pour éviter les
-# collisions mypy (ex. `test_config` → renommé `test_matcher_config` côté matching).
+# - `packages/verifier/tests/`, `packages/matching/tests/` et `packages/webui/tests/` n'ont PAS de
+#   `__init__.py` → modules plats. Les noms de fichiers de tests plats doivent être uniques pour
+#   éviter les collisions mypy (ex. `test_config` → renommé `test_matcher_config` côté matching ;
+#   webui utilise la convention `test_webui_<chose>.py`).
 files = [
   "packages/crawler/src",
   "packages/crawler/tests",
@@ -50,6 +55,8 @@ files = [
   "packages/matching/tests",
   "packages/verifier/src",
   "packages/verifier/tests",
+  "packages/webui/src",
+  "packages/webui/tests",
 ]
 
 [[tool.mypy.overrides]]
