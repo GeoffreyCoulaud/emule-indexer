@@ -60,7 +60,7 @@ uv sync --dev                          # install (scripts/setup-dev.sh also inst
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy
-uv run sqlfluff lint packages/crawler/src             # embedded SQLite migrations
+uv run sqlfluff lint packages/crawler/src packages/webui/src  # embedded SQLite migrations
 ```
 
 **The gate is PER PACKAGE** (`cd packages/<pkg> && uv run pytest`). A bare `uv run pytest` from the repo root is **not** the gate: the root has no `[tool.pytest.ini_options]` (so no coverage, no integration-marker deselection), and a root `conftest.py` (`collect_ignore_glob = ["packages/*"]`) makes it collect nothing (exit 5). Tooling split: `[tool.ruff]` / `[tool.mypy]` at root span all three packages; `[tool.pytest]` / `[tool.coverage]` / `[tool.sqlfluff]` are per-package; one root `uv.lock`; `config/` stays at root.
