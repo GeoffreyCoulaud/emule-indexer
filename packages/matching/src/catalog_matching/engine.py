@@ -11,10 +11,10 @@ d'un adapter d'un plan ultérieur.
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from emule_indexer.domain.matching.config import MatcherConfig
-from emule_indexer.domain.matching.matchers import CoverageMatcher
-from emule_indexer.domain.matching.models import FileCandidate, TargetSegment
-from emule_indexer.domain.matching.resolver import MatcherResolver, ResolvedTarget
+from catalog_matching.config import MatcherConfig
+from catalog_matching.matchers import CoverageMatcher
+from catalog_matching.models import FileCandidate, TargetSegment
+from catalog_matching.resolver import MatcherResolver, ResolvedTarget
 
 
 @dataclass(frozen=True)

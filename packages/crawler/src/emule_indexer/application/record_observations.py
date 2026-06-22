@@ -19,8 +19,8 @@ VISIBLE (log niveau ``error``, pour qu'un échec persistant se remarque).
 
 import logging
 
+from catalog_matching.engine import MatchingEngine, to_record
 from emule_indexer.application.run_download_cycle import DOWNLOAD_NUDGE_SUBJECT
-from emule_indexer.domain.matching.engine import MatchingEngine, to_record
 from emule_indexer.domain.observability.events import DecisionRecorded, ObservationRecorded
 from emule_indexer.domain.observation import FileObservation
 from emule_indexer.ports.catalog_repository import CatalogRepository

@@ -1,6 +1,6 @@
 import datetime
 
-from emule_indexer.domain.matching.models import TargetSegment
+from catalog_matching.models import TargetSegment
 from emule_indexer.domain.search.keywords import SearchKeyword, generate_keywords
 
 _S2E062A = TargetSegment(

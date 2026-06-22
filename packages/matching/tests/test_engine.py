@@ -3,17 +3,17 @@ import datetime
 
 import pytest
 
-from emule_indexer.domain.matching.config import TIERS, MatcherConfig
-from emule_indexer.domain.matching.engine import (
+from catalog_matching.config import TIERS, MatcherConfig
+from catalog_matching.engine import (
     _TIER_RANK,
     Explanation,
     MatchDecision,
     MatchingEngine,
     _first_matching_rule,
 )
-from emule_indexer.domain.matching.models import FileCandidate, TargetSegment
-from emule_indexer.domain.matching.resolver import MatcherResolver, ResolvedTarget
-from emule_indexer.domain.matching.validation import parse_matcher_config
+from catalog_matching.models import FileCandidate, TargetSegment
+from catalog_matching.resolver import MatcherResolver, ResolvedTarget
+from catalog_matching.validation import parse_matcher_config
 
 
 def test_tier_rank_orders_download_above_notify_above_catalog() -> None:

@@ -1,12 +1,12 @@
 import pytest
 
-from emule_indexer.domain.matching.matchers import (
+from catalog_matching.matchers import (
     AttrBetweenMatcher,
     CoverageMatcher,
     KeywordMatcher,
     RegexMatcher,
 )
-from emule_indexer.domain.matching.models import FileCandidate
+from catalog_matching.models import FileCandidate
 
 
 def test_keyword_single_word_present() -> None:

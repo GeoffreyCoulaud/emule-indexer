@@ -25,13 +25,13 @@ import sqlite3
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 
-from emule_indexer.adapters.persistence_sqlite.connection import Clock, utc_iso, utc_now
-from emule_indexer.adapters.persistence_sqlite.errors import PersistenceError, wrap_sqlite_errors
-from emule_indexer.domain.matching.engine import (
+from catalog_matching.engine import (
     DecisionRecord,
     DownloadCandidate,
     MatchDecision,
 )
+from emule_indexer.adapters.persistence_sqlite.connection import Clock, utc_iso, utc_now
+from emule_indexer.adapters.persistence_sqlite.errors import PersistenceError, wrap_sqlite_errors
 from emule_indexer.domain.observation import FileObservation
 from emule_indexer.ports.catalog_repository import ObservedFile
 

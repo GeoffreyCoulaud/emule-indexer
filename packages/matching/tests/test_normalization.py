@@ -1,6 +1,6 @@
 import pytest
 
-from emule_indexer.domain.normalization import fold, normalize, tokenize
+from catalog_matching.normalization import fold, normalize, tokenize
 
 
 @pytest.mark.parametrize(

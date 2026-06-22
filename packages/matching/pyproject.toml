@@ -1,0 +1,29 @@
+[project]
+name = "catalog-matching"
+version = "0.0.0"
+description = "Moteur de matching fichier→épisode (domaine pur, YAML-driven) — partagé crawler/webui"
+requires-python = ">=3.12"
+dependencies = [
+    "google-re2>=1.1.20251105",
+    "rapidfuzz>=3.14.5",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/catalog_matching"]
+
+[tool.pytest.ini_options]
+addopts = '--cov=catalog_matching --cov-report=term-missing --cov-fail-under=100 --strict-markers'
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["catalog_matching"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 100
+exclude_also = ["if TYPE_CHECKING:"]

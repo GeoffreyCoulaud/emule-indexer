@@ -11,13 +11,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import assert_never
 
-from emule_indexer.domain.matching.combinators import (
+from catalog_matching.combinators import (
     AllMatcher,
     AnyMatcher,
     Matcher,
     NotMatcher,
 )
-from emule_indexer.domain.matching.config import (
+from catalog_matching.config import (
     AllDef,
     AnyDef,
     AttrBetweenDef,
@@ -31,14 +31,14 @@ from emule_indexer.domain.matching.config import (
     TokenDef,
     TokenRef,
 )
-from emule_indexer.domain.matching.interpolation import interpolate
-from emule_indexer.domain.matching.matchers import (
+from catalog_matching.interpolation import interpolate
+from catalog_matching.matchers import (
     AttrBetweenMatcher,
     CoverageMatcher,
     KeywordMatcher,
     RegexMatcher,
 )
-from emule_indexer.domain.matching.models import TargetSegment
+from catalog_matching.models import TargetSegment
 
 # Mot-clé de config désignant le titre de la cible comme référence de coverage (§8.5).
 _TITLE_KEYWORD = "title"

@@ -1,11 +1,11 @@
-from emule_indexer.domain.matching.combinators import (
+from catalog_matching.combinators import (
     AllMatcher,
     AnyMatcher,
     Matcher,
     NotMatcher,
 )
-from emule_indexer.domain.matching.matchers import KeywordMatcher
-from emule_indexer.domain.matching.models import FileCandidate
+from catalog_matching.matchers import KeywordMatcher
+from catalog_matching.models import FileCandidate
 
 
 class _Const:

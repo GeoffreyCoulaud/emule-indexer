@@ -3,10 +3,10 @@ import sqlite3
 
 import pytest
 
+from catalog_matching.engine import MatchingEngine
 from emule_indexer.adapters.persistence_sqlite.catalog_repository import SqliteCatalogRepository
 from emule_indexer.application.record_observations import record_observation
 from emule_indexer.application.run_download_cycle import DOWNLOAD_NUDGE_SUBJECT
-from emule_indexer.domain.matching.engine import MatchingEngine
 from emule_indexer.domain.observability.events import ObservationRecorded
 from emule_indexer.domain.observation import FileObservation
 from tests.application.fakes import RecordingSignal, RecordingTelemetry

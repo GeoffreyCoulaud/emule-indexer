@@ -3,8 +3,8 @@
 import re2
 from rapidfuzz import fuzz
 
-from emule_indexer.domain.matching.models import FileCandidate
-from emule_indexer.domain.normalization import fold, tokenize
+from catalog_matching.models import FileCandidate
+from catalog_matching.normalization import fold, tokenize
 
 
 class KeywordMatcher:

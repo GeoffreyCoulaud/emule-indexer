@@ -13,7 +13,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
-from emule_indexer.domain.matching.engine import DecisionRecord, DownloadCandidate, MatchDecision
+from catalog_matching.engine import DecisionRecord, DownloadCandidate, MatchDecision
 from emule_indexer.domain.observation import FileObservation
 
 

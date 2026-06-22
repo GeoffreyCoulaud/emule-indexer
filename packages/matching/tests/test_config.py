@@ -2,7 +2,7 @@ import dataclasses
 
 import pytest
 
-from emule_indexer.domain.matching.config import (
+from catalog_matching.config import (
     AllDef,
     AnyDef,
     AttrBetweenDef,

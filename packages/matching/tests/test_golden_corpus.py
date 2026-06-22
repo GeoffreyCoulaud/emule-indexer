@@ -3,12 +3,12 @@ from typing import Any
 
 import pytest
 
+from catalog_matching.engine import MatchingEngine
+from catalog_matching.models import FileCandidate
+from catalog_matching.validation import parse_matcher_config, parse_targets
 from emule_indexer.adapters.config.yaml_loader import load_yaml
-from emule_indexer.domain.matching.engine import MatchingEngine
-from emule_indexer.domain.matching.models import FileCandidate
-from emule_indexer.domain.matching.validation import parse_matcher_config, parse_targets
 
-_FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
+_FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 def _engine() -> MatchingEngine:

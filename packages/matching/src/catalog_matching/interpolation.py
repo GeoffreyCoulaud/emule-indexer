@@ -5,7 +5,7 @@ import re as _re
 
 import re2
 
-from emule_indexer.domain.matching.models import TargetSegment
+from catalog_matching.models import TargetSegment
 
 # Noms de mois français SANS accent (déjà repliés) : les patterns sont matchés
 # contre fold(raw), qui retire les diacritiques. Ainsi "fevrier" matche "février".

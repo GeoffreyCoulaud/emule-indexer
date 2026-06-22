@@ -23,10 +23,10 @@ import asyncio
 import logging
 from collections.abc import Sequence
 
+from catalog_matching.models import TargetSegment
 from emule_indexer.application.edge_state import EdgeState
 from emule_indexer.application.networks import ED2K, KAD
 from emule_indexer.application.search_worker import BackoffRegistry, SearchTask, SearchWorker
-from emule_indexer.domain.matching.models import TargetSegment
 from emule_indexer.domain.observability.events import (
     AllInstancesBlind,
     ConnectedInstancesSampled,

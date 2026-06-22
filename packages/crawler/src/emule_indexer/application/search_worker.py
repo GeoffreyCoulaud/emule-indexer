@@ -30,9 +30,9 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from catalog_matching.engine import MatchingEngine
 from emule_indexer.application.networks import network_label
 from emule_indexer.application.record_observations import record_observation
-from emule_indexer.domain.matching.engine import MatchingEngine
 from emule_indexer.domain.observability.events import (
     InstanceUnreachable,
     SearchExecuted,

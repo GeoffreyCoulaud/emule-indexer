@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `emule-indexer` continuously surveils the eMule network (eD2k + Kad, via an aMule client driven over its EC protocol) to recover lost-media episodes of the French dub of *Keroro mission Titar* (aired 2008 on Teletoon), cataloguing all available metadata along the way.
 
-It is a **virtual uv workspace** with two packages: `packages/crawler/` (package `emule_indexer`, dist `emule-indexer`) and `packages/verifier/` (package `download_verifier`, dist `download-verifier`).
+It is a **virtual uv workspace** with three packages: `packages/crawler/` (package `emule_indexer`, dist `emule-indexer`), `packages/verifier/` (package `download_verifier`, dist `download-verifier`), and `packages/matching/` (package `catalog_matching`, dist `catalog-matching`, shared domain).
 
 ## Orientation — read before substantial work
 
@@ -25,7 +25,7 @@ The crawler is Clean/Hexagonal: `domain/` pure, `application/` async use-cases, 
 
 | Subsystem | Location | Role |
 |---|---|---|
-| Matching engine | c: `domain/matching/` | declarative YAML-policy file→episode matcher (see Architecture) |
+| Matching engine | `packages/matching/src/catalog_matching/` | declarative YAML-policy file→episode matcher (see Architecture) — shared by crawler and future webui |
 | EC adapter | c: `adapters/mule_ec/` | aMule EC codec/transport/client; `tools/ec_probe.py` |
 | Persistence | c: `adapters/persistence_sqlite/` | append-only catalog.db + local.db; `.sql` migrations; sync repos |
 | Search / crawl loop | c: `domain/search/`, `application/` | keywords/cycle/backoff/coverage; worker pool, persisted backoff |
@@ -53,7 +53,8 @@ The crawler is Clean/Hexagonal: `domain/` pure, `application/` async use-cases, 
 ```bash
 uv sync --dev                          # install (scripts/setup-dev.sh also installs the pre-push hook)
 
-# The full gate — all six must be green before any commit (pre-push hook + CI run the same):
+# The full gate — all seven must be green before any commit (pre-push hook + CI run the same):
+( cd packages/matching && uv run pytest -q )          # matching tests, 100% BRANCH coverage
 ( cd packages/crawler  && uv run pytest -q )          # crawler tests, 100% BRANCH coverage
 ( cd packages/verifier && uv run pytest -q )          # verifier tests, 100% BRANCH coverage
 uv run ruff check .
@@ -62,12 +63,12 @@ uv run mypy
 uv run sqlfluff lint packages/crawler/src             # embedded SQLite migrations
 ```
 
-**The gate is PER PACKAGE** (`cd packages/<pkg> && uv run pytest`). A bare `uv run pytest` from the repo root is **not** the gate: the root has no `[tool.pytest.ini_options]` (so no coverage, no integration-marker deselection), and a root `conftest.py` (`collect_ignore_glob = ["packages/*"]`) makes it collect nothing (exit 5). Tooling split: `[tool.ruff]` / `[tool.mypy]` at root span both packages; `[tool.pytest]` / `[tool.coverage]` / `[tool.sqlfluff]` are per-package; one root `uv.lock`; `config/` stays at root.
+**The gate is PER PACKAGE** (`cd packages/<pkg> && uv run pytest`). A bare `uv run pytest` from the repo root is **not** the gate: the root has no `[tool.pytest.ini_options]` (so no coverage, no integration-marker deselection), and a root `conftest.py` (`collect_ignore_glob = ["packages/*"]`) makes it collect nothing (exit 5). Tooling split: `[tool.ruff]` / `[tool.mypy]` at root span all three packages; `[tool.pytest]` / `[tool.coverage]` / `[tool.sqlfluff]` are per-package; one root `uv.lock`; `config/` stays at root.
 
 **Single test** (the package-wide `--cov-fail-under=100` makes a lone test "fail" — disable coverage):
 
 ```bash
-( cd packages/crawler && uv run pytest tests/domain/matching/test_engine.py::test_evaluate_real_62a_is_download_via_first_rule_on_62a --no-cov -q )
+( cd packages/matching && uv run pytest tests/test_engine.py::test_evaluate_real_62a_is_download_via_first_rule_on_62a --no-cov -q )
 ```
 
 Integration suites (Docker / ffmpeg, deselected by default, excluded from coverage) are documented in `docs/testing-guide.md`.
@@ -84,7 +85,7 @@ Integration suites (Docker / ffmpeg, deselected by default, excluded from covera
 
 ## Architecture — the matching engine
 
-The core is one layered, declarative matching engine under `packages/crawler/src/emule_indexer/domain/matching/`. **The matcher/rule policy is 100% in YAML config; the code is a minimal fixed engine.**
+The core is one layered, declarative matching engine under `packages/matching/src/catalog_matching/`. **The matcher/rule policy is 100% in YAML config; the code is a minimal fixed engine.**
 
 ```
 load_yaml(path)                         # adapters/config/yaml_loader.py — the ONLY I/O

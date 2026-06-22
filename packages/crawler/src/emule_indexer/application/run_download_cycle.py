@@ -33,11 +33,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from catalog_matching.engine import DownloadCandidate
+from catalog_matching.models import TargetSegment
 from emule_indexer.domain.download.ed2k_link import build_ed2k_link
 from emule_indexer.domain.download.policy import DownloadVerdict, download_policy
 from emule_indexer.domain.download.states import DownloadState
-from emule_indexer.domain.matching.engine import DownloadCandidate
-from emule_indexer.domain.matching.models import TargetSegment
 from emule_indexer.domain.observability.events import (
     DownloadCompleted,
     DownloadQueued,

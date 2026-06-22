@@ -6,7 +6,7 @@ combinateurs) et exposent la même interface ``matches(candidate) -> bool``.
 
 from typing import Protocol
 
-from emule_indexer.domain.matching.models import FileCandidate
+from catalog_matching.models import FileCandidate
 
 
 class Matcher(Protocol):

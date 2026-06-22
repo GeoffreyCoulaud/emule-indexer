@@ -11,7 +11,7 @@ from typing import Any
 
 import re2
 
-from emule_indexer.domain.matching.config import (
+from catalog_matching.config import (
     TIERS,
     AllDef,
     AnyDef,
@@ -27,9 +27,9 @@ from emule_indexer.domain.matching.config import (
     TokenDef,
     TokenRef,
 )
-from emule_indexer.domain.matching.interpolation import InterpolationError, interpolate
-from emule_indexer.domain.matching.matchers import ATTR_NAMES
-from emule_indexer.domain.matching.models import TargetSegment
+from catalog_matching.interpolation import InterpolationError, interpolate
+from catalog_matching.matchers import ATTR_NAMES
+from catalog_matching.models import TargetSegment
 
 _CONDITION_KEYS = ("all", "any", "not")
 

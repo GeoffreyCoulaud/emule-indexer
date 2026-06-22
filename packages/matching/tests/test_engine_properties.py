@@ -1,9 +1,9 @@
 import datetime
 import random
 
-from emule_indexer.domain.matching.engine import MatchingEngine
-from emule_indexer.domain.matching.models import FileCandidate, TargetSegment
-from emule_indexer.domain.matching.validation import parse_matcher_config
+from catalog_matching.engine import MatchingEngine
+from catalog_matching.models import FileCandidate, TargetSegment
+from catalog_matching.validation import parse_matcher_config
 
 # Seed CONSTANT : chaque run est identique (zéro flakiness, cf. spec §16).
 _SEED = 20260610
@@ -100,7 +100,7 @@ def test_property_higher_priority_rule_never_lowers_tier() -> None:
     # P2 : ajouter une règle PLUS PRIORITAIRE (index 0) de palier >= ne baisse jamais le
     # palier résultant (§16). On compare la config canonique à une variante où l'on
     # PRÉPEND une règle download large ; pour tout fichier déjà décidé, le palier ne baisse pas.
-    from emule_indexer.domain.matching.engine import _TIER_RANK
+    from catalog_matching.engine import _TIER_RANK
 
     config_base = parse_matcher_config(_CANONICAL_RAW)
     raw_boosted = {

@@ -27,6 +27,9 @@ from pathlib import Path
 import httpx
 from prometheus_client import CollectorRegistry, start_http_server
 
+from catalog_matching.config import MatcherConfig
+from catalog_matching.engine import MatchingEngine
+from catalog_matching.models import TargetSegment
 from emule_indexer.adapters.config.crawler_config import ConfigError, CrawlerConfig
 from emule_indexer.adapters.config.local_config import AmuleEndpoint, LocalConfig
 from emule_indexer.adapters.docker_restart_http import HttpMuleRestarter
@@ -60,9 +63,6 @@ from emule_indexer.application.search_worker import (
     WorkerDeps,
     WorkerPolicy,
 )
-from emule_indexer.domain.matching.config import MatcherConfig
-from emule_indexer.domain.matching.engine import MatchingEngine
-from emule_indexer.domain.matching.models import TargetSegment
 from emule_indexer.domain.observability.events import CrawlerStarted
 from emule_indexer.ports.clock import Clock, Rng
 from emule_indexer.ports.content_verifier import ContentVerifier

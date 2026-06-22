@@ -2,7 +2,7 @@
 
 SEUL module du projet qui importe ``yaml`` et touche le système de fichiers pour la
 config. Ne valide PAS le fond (schéma/graphe/RE2) : c'est le rôle du domaine
-(``domain.matching.validation``). Garde-fou minimal : la racine doit être un mapping.
+(``catalog_matching.validation``). Garde-fou minimal : la racine doit être un mapping.
 """
 
 from pathlib import Path

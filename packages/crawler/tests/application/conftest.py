@@ -6,13 +6,13 @@ from pathlib import Path
 
 import pytest
 
+from catalog_matching.engine import MatchingEngine
+from catalog_matching.validation import parse_matcher_config, parse_targets
 from emule_indexer.adapters.config.yaml_loader import load_yaml
 from emule_indexer.adapters.persistence_sqlite.catalog_repository import SqliteCatalogRepository
 from emule_indexer.adapters.persistence_sqlite.connection import open_catalog
-from emule_indexer.domain.matching.engine import MatchingEngine
-from emule_indexer.domain.matching.validation import parse_matcher_config, parse_targets
 
-_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
+_FIXTURES = Path(__file__).resolve().parents[3] / "matching" / "tests" / "fixtures"
 _NODE = "11111111-2222-3333-4444-555555555555"
 
 

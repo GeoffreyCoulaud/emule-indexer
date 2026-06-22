@@ -2,7 +2,7 @@ import dataclasses
 
 import pytest
 
-from emule_indexer.domain.matching.models import FileCandidate
+from catalog_matching.models import FileCandidate
 from emule_indexer.domain.observation import FileObservation
 
 

@@ -1,6 +1,6 @@
 import datetime
 
-from emule_indexer.domain.matching.models import FileCandidate, TargetSegment
+from catalog_matching.models import FileCandidate, TargetSegment
 
 
 def test_file_candidate_defaults() -> None:

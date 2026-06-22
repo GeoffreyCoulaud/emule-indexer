@@ -3,6 +3,7 @@ import sqlite3
 
 import pytest
 
+from catalog_matching.engine import MatchingEngine
 from emule_indexer.adapters.persistence_sqlite.catalog_repository import SqliteCatalogRepository
 from emule_indexer.application.search_worker import (
     BackoffRegistry,
@@ -11,7 +12,6 @@ from emule_indexer.application.search_worker import (
     WorkerDeps,
     WorkerPolicy,
 )
-from emule_indexer.domain.matching.engine import MatchingEngine
 from emule_indexer.domain.observability.events import (
     InstanceUnreachable,
     SearchExecuted,

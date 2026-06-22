@@ -3,14 +3,14 @@ import datetime
 import pytest
 import re2
 
-from emule_indexer.domain.matching.interpolation import (
+from catalog_matching.interpolation import (
     FRENCH_MONTHS,
     InterpolationError,
     date_alternation_pattern,
     interpolate,
 )
-from emule_indexer.domain.matching.models import TargetSegment
-from emule_indexer.domain.normalization import fold
+from catalog_matching.models import TargetSegment
+from catalog_matching.normalization import fold
 
 
 def test_french_months_are_accent_free_and_complete() -> None:

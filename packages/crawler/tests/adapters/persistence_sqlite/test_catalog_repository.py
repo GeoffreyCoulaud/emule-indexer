@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
+from catalog_matching.engine import Explanation, MatchDecision
 from emule_indexer.adapters.persistence_sqlite.catalog_repository import SqliteCatalogRepository
 from emule_indexer.adapters.persistence_sqlite.connection import open_catalog
 from emule_indexer.adapters.persistence_sqlite.errors import PersistenceError
-from emule_indexer.domain.matching.engine import Explanation, MatchDecision
 from emule_indexer.domain.observation import FileObservation
 from emule_indexer.ports.catalog_repository import CatalogRepository
 

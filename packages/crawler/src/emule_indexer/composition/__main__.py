@@ -16,19 +16,19 @@ import logging
 import sys
 from pathlib import Path
 
+from catalog_matching.validation import (
+    ConfigError as MatcherConfigError,
+)
+from catalog_matching.validation import (
+    parse_matcher_config,
+    parse_targets,
+)
 from emule_indexer.adapters.clock_asyncio import AsyncioClock, SeededRng
 from emule_indexer.adapters.config.crawler_config import ConfigError, parse_crawler_config
 from emule_indexer.adapters.config.local_config import parse_local_config
 from emule_indexer.adapters.config.yaml_loader import YamlLoadError, load_yaml
 from emule_indexer.adapters.decision_signal_asyncio import AsyncioDecisionSignal
 from emule_indexer.composition.app import CrawlerApp
-from emule_indexer.domain.matching.validation import (
-    ConfigError as MatcherConfigError,
-)
-from emule_indexer.domain.matching.validation import (
-    parse_matcher_config,
-    parse_targets,
-)
 
 
 def _add_config_options(parser: argparse.ArgumentParser) -> None:

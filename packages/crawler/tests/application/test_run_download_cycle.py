@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
+from catalog_matching.engine import DownloadCandidate
+from catalog_matching.models import TargetSegment
 from emule_indexer.application.run_download_cycle import DownloadDeps, run_download_cycle
 from emule_indexer.domain.download.states import DownloadState
-from emule_indexer.domain.matching.engine import DownloadCandidate
-from emule_indexer.domain.matching.models import TargetSegment
 from emule_indexer.domain.observability.events import DownloadCompleted, PromotionFailed
 from emule_indexer.ports.catalog_repository import ObservedFile
 from emule_indexer.ports.mule_client import (

@@ -2,7 +2,7 @@ import datetime
 
 import pytest
 
-from emule_indexer.domain.matching.config import (
+from catalog_matching.config import (
     AllDef,
     AnyDef,
     AttrBetweenDef,
@@ -12,7 +12,7 @@ from emule_indexer.domain.matching.config import (
     RegexDef,
     TokenRef,
 )
-from emule_indexer.domain.matching.validation import (
+from catalog_matching.validation import (
     ConfigError,
     CycleError,
     DepthExceededError,

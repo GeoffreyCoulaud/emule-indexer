@@ -15,6 +15,8 @@ import pytest
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.wait_strategies import LogMessageWaitStrategy
 
+from catalog_matching.models import TargetSegment
+from catalog_matching.validation import parse_matcher_config
 from emule_indexer.adapters.clock_asyncio import AsyncioClock, SeededRng
 from emule_indexer.adapters.config.crawler_config import BackoffConfig, CrawlerConfig
 from emule_indexer.adapters.config.local_config import AmuleEndpoint, LocalConfig
@@ -25,15 +27,13 @@ from emule_indexer.adapters.persistence_sqlite.scheduler_state_repository import
     SqliteSchedulerStateRepository,
 )
 from emule_indexer.composition.app import CrawlerApp
-from emule_indexer.domain.matching.models import TargetSegment
-from emule_indexer.domain.matching.validation import parse_matcher_config
 from emule_indexer.ports.mule_client import NetworkStatus
 
 pytestmark = pytest.mark.orchestration_integration
 
 _EC_PASSWORD = "indexer-ec-test"
 _IMAGE = "ngosang/amule:3.0.0-1"
-_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
+_FIXTURES = Path(__file__).resolve().parents[3] / "matching" / "tests" / "fixtures"
 _TARGETS = (
     TargetSegment(
         season=2,

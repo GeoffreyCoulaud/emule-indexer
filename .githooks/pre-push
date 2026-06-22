@@ -8,6 +8,7 @@ echo "[pre-push] ruff check…";          uv run ruff check .
 echo "[pre-push] ruff format --check…"; uv run ruff format --check .
 echo "[pre-push] sqlfluff lint…";       uv run sqlfluff lint packages/crawler/src
 echo "[pre-push] mypy…";                uv run mypy
+echo "[pre-push] pytest matching…";     ( cd packages/matching && uv run pytest )
 echo "[pre-push] pytest crawler…";      ( cd packages/crawler  && uv run pytest )
 echo "[pre-push] pytest verifier…";     ( cd packages/verifier && uv run pytest )
 echo "[pre-push] OK"

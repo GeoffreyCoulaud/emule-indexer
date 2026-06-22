@@ -1,9 +1,9 @@
 import datetime
 
-from emule_indexer.domain.matching.matchers import AttrBetweenMatcher, CoverageMatcher, RegexMatcher
-from emule_indexer.domain.matching.models import FileCandidate, TargetSegment
-from emule_indexer.domain.matching.resolver import MatcherResolver
-from emule_indexer.domain.matching.validation import parse_matcher_config
+from catalog_matching.matchers import AttrBetweenMatcher, CoverageMatcher, RegexMatcher
+from catalog_matching.models import FileCandidate, TargetSegment
+from catalog_matching.resolver import MatcherResolver
+from catalog_matching.validation import parse_matcher_config
 
 _TARGET = TargetSegment(
     season=2,

@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from catalog_matching.engine import MatchingEngine
+from catalog_matching.models import TargetSegment
 from emule_indexer.adapters.persistence_sqlite.catalog_repository import SqliteCatalogRepository
 from emule_indexer.adapters.persistence_sqlite.connection import open_local
 from emule_indexer.adapters.persistence_sqlite.scheduler_state_repository import (
@@ -18,8 +20,6 @@ from emule_indexer.application.search_worker import (
     WorkerDeps,
     WorkerPolicy,
 )
-from emule_indexer.domain.matching.engine import MatchingEngine
-from emule_indexer.domain.matching.models import TargetSegment
 from emule_indexer.domain.observability.events import AllInstancesBlind
 from emule_indexer.domain.observation import FileObservation
 from emule_indexer.ports.mule_client import KadStatus, NetworkStatus

@@ -1,6 +1,6 @@
 from collections.abc import Mapping, Sequence
 
-from emule_indexer.domain.matching.engine import (
+from catalog_matching.engine import (
     DecisionRecord,
     DownloadCandidate,
     Explanation,

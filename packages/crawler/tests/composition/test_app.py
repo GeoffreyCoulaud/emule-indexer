@@ -6,6 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from catalog_matching.config import MatcherConfig
+from catalog_matching.models import TargetSegment
+from catalog_matching.validation import parse_matcher_config
 from emule_indexer.adapters.config.crawler_config import (
     BackoffConfig,
     ConfigError,
@@ -18,9 +21,6 @@ from emule_indexer.adapters.config.crawler_config import (
 from emule_indexer.adapters.config.local_config import AmuleEndpoint, LocalConfig
 from emule_indexer.adapters.config.yaml_loader import load_yaml
 from emule_indexer.composition.app import CrawlerApp, default_client_factory
-from emule_indexer.domain.matching.config import MatcherConfig
-from emule_indexer.domain.matching.models import TargetSegment
-from emule_indexer.domain.matching.validation import parse_matcher_config
 from emule_indexer.domain.observation import FileObservation
 from emule_indexer.ports.content_verifier import VerificationResult
 from emule_indexer.ports.mule_client import KadStatus, MuleUnreachableError, NetworkStatus
@@ -36,7 +36,7 @@ _TARGETS = (
         broadcast_date=datetime.date(2008, 9, 21),
     ),
 )
-_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
+_FIXTURES = Path(__file__).resolve().parents[3] / "matching" / "tests" / "fixtures"
 _DL_NAME = "Keroro N°062A Les demoiselles cambrioleuses.avi"
 
 

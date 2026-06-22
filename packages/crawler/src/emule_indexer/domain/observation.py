@@ -8,7 +8,7 @@ le plan A persistera cet objet tel quel ; l'adapter DB ajoutera ``observed_at``/
 
 from dataclasses import dataclass
 
-from emule_indexer.domain.matching.models import FileCandidate
+from catalog_matching.models import FileCandidate
 
 # DÉCISION 8 : les « MB » affichés par les clients eMule sont binaires (Mio).
 _BYTES_PER_MIB = 1024 * 1024

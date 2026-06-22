@@ -10,8 +10,8 @@ shuffle seedé du cycle (``cycle.py``) parte d'un ordre stable.
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from emule_indexer.domain.matching.models import TargetSegment
-from emule_indexer.domain.normalization import tokenize
+from catalog_matching.models import TargetSegment
+from catalog_matching.normalization import tokenize
 
 # Mot-clé large : la franchise. Ratisse tout pour le catalogue (spec MVP §6).
 _BROAD_KEYWORD = "keroro"
