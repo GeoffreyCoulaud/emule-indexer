@@ -75,6 +75,17 @@ def _parse_operand(raw: Any) -> Operand:
     raise ConfigError(f"opérande de type invalide : {type(raw).__name__} ({raw!r})")
 
 
+def _require_unit_fraction(value: float, what: str) -> float:
+    """Valide qu'une fraction logique (seuil coverage/fuzz) est dans [0, 1] (fail-fast §8.4).
+
+    Hors de [0, 1], la règle est silencieusement inerte (seuil jamais atteint) : c'est une
+    erreur de config (typiquement un pourcentage saisi pour une fraction), rejetée au chargement.
+    """
+    if not 0.0 <= value <= 1.0:
+        raise ConfigError(f"{what} doit être dans [0, 1], obtenu {value}")
+    return value
+
+
 def _parse_token_ref(raw: dict[str, Any]) -> TokenRef:
     name = raw.get("token")
     if not isinstance(name, str):
@@ -83,11 +94,20 @@ def _parse_token_ref(raw: dict[str, Any]) -> TokenRef:
     fuzz_value = raw.get("fuzz")
     # La licéité d'un override min/fuzz (coverage-only, cf. EBNF §8.3) est vérifiée au
     # niveau du graphe (validate_config), pas ici : le parsing reste purement structurel
-    # et indépendant de l'ordre de définition des tokens (réf. en avant autorisée).
+    # et indépendant de l'ordre de définition des tokens (réf. en avant autorisée). Les BORNES
+    # [0, 1] sont en revanche structurelles → validées ici.
     return TokenRef(
         name=name,
-        min=None if min_value is None else float(min_value),
-        fuzz=None if fuzz_value is None else float(fuzz_value),
+        min=(
+            None
+            if min_value is None
+            else _require_unit_fraction(float(min_value), f"override 'min' de {name!r}")
+        ),
+        fuzz=(
+            None
+            if fuzz_value is None
+            else _require_unit_fraction(float(fuzz_value), f"override 'fuzz' de {name!r}")
+        ),
     )
 
 
@@ -141,10 +161,11 @@ def _parse_token_def(raw: Any) -> TokenDef:
         if min_value is None:
             raise ConfigError("un token coverage doit déclarer 'min'")
         fuzz_value = _require_float(mapping, "fuzz")
+        fuzz = 0.85 if fuzz_value is None else _require_unit_fraction(fuzz_value, "coverage 'fuzz'")
         return CoverageDef(
             reference=str(mapping["coverage"]),
-            min=min_value,
-            fuzz=0.85 if fuzz_value is None else fuzz_value,
+            min=_require_unit_fraction(min_value, "coverage 'min'"),
+            fuzz=fuzz,
         )
     if "attr_between" in mapping:
         attr = str(mapping["attr_between"])

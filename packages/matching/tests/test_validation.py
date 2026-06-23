@@ -165,6 +165,33 @@ def test_rule_with_empty_any_is_rejected() -> None:
         parse_matcher_config({"rules": [{"name": "pwn", "tier": "download", "any": []}]})
 
 
+def test_coverage_min_out_of_unit_range_is_rejected() -> None:
+    # config-validation#2 : min/fuzz sont des fractions logiques [0, 1]. 'min: 5.0' (frappe pour
+    # 0.5) rendrait la règle silencieusement INERTE (value() <= 1 toujours faux → ne matche
+    # jamais) sans aucun signal au chargement → fail-fast §8.4.
+    with pytest.raises(ConfigError, match=r"\[0, 1\]"):
+        parse_matcher_config({"tokens": {"t": {"coverage": "title", "min": 5.0}}, "rules": []})
+
+
+def test_coverage_fuzz_out_of_unit_range_is_rejected() -> None:
+    # 'fuzz: 99' (frappe pour 0.99) → ratio/100 >= fuzz toujours faux → value=0, règle muette.
+    with pytest.raises(ConfigError, match=r"\[0, 1\]"):
+        parse_matcher_config(
+            {"tokens": {"t": {"coverage": "title", "min": 0.5, "fuzz": 99}}, "rules": []}
+        )
+
+
+def test_coverage_override_min_out_of_unit_range_is_rejected() -> None:
+    # Même borne pour un override min/fuzz sur un TokenRef (coverage).
+    with pytest.raises(ConfigError, match=r"\[0, 1\]"):
+        parse_matcher_config(
+            {
+                "tokens": {"cov": {"coverage": "title", "min": 0.5}},
+                "rules": [{"name": "r", "tier": "catalog", "all": [{"token": "cov", "min": 5.0}]}],
+            }
+        )
+
+
 def test_token_ref_missing_name_raises() -> None:
     with pytest.raises(ConfigError, match="token"):
         parse_matcher_config(
