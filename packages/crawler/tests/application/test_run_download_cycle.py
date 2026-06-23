@@ -79,15 +79,24 @@ class FakeDownloadClient:
 
 
 class FakeQuarantine:
-    """Quarantine fausse : enregistre les promotions, échoue sur les hash de ``fail_for``."""
+    """Quarantine fausse FIDÈLE au contrat : ``promote`` fait un ``os.replace`` qui CONSOMME la
+    source. Un re-promote du même hash (source déjà consommée, cible déjà en place) reproduit le
+    comportement du vrai ``FilesystemQuarantine.promote`` — voir cette branche. ``fail_for``
+    simule une panne FS (``OSError``) au premier promote."""
 
     def __init__(self, *, fail_for: set[str] | None = None) -> None:
         self.promoted: list[tuple[Path, str]] = []
         self._fail_for = fail_for or set()
+        self._consumed: set[str] = set()
 
     def promote(self, staging_path: Path, ed2k_hash: str) -> None:
         if ed2k_hash in self._fail_for:
             raise OSError("rename impossible")
+        if ed2k_hash in self._consumed:
+            # source déjà consommée par une promotion antérieure (cible quarantine/<hash> en
+            # place) : le vrai FilesystemQuarantine.promote est idempotent → no-op succès.
+            return
+        self._consumed.add(ed2k_hash)
         self.promoted.append((staging_path, ed2k_hash))
 
 
@@ -733,6 +742,45 @@ async def test_candidate_repo_failure_does_not_starve_completions() -> None:
     # _B n'a PAS été mis en file (record_queued a levé) → aucun lien émis pour lui.
     assert _B not in downloads.states
     assert client.added_links == []
+
+
+@pytest.mark.asyncio
+async def test_completion_recovers_after_transient_enqueue_failure() -> None:
+    # Régression logic-download#0 : un échec TRANSITOIRE d'enqueue_verification APRÈS un promote
+    # réussi (source déjà consommée par os.replace) ne doit PAS bloquer le fichier pour toujours.
+    # Au cycle suivant, enqueue rétablie + promote idempotent → le fichier finit QUARANTINED +
+    # enfilé, au lieu de boucler indéfiniment sur PromotionFailed (source consommée introuvable).
+    downloads = FakeDownloadRepo()
+    downloads.states[_A] = DownloadState.DOWNLOADING
+    quarantine = FakeQuarantine()  # PARTAGÉ entre les cycles : modélise la consommation de source
+    shared = (SharedFileEntry(ed2k_hash=_A, name="a.avi"),)
+
+    # Cycle 1 : promote réussit (source consommée) puis enqueue lève RepositoryError.
+    await run_download_cycle(
+        _deps(
+            client=FakeDownloadClient(shared=[shared]),
+            quarantine=quarantine,
+            downloads=downloads,
+            catalog=FakeCatalogReads(),
+            local=FakeLocalRepo(fail_enqueue=True),
+        )
+    )
+    assert downloads.states[_A] is DownloadState.COMPLETED  # bloqué à completed ce tour-ci
+    assert (Path("/staging") / "a.avi", _A) in quarantine.promoted  # source DÉJÀ consommée
+
+    # Cycle 2 : enqueue rétablie. Le hash est toujours partagé, état COMPLETED → re-promotion.
+    local_ok = FakeLocalRepo()
+    await run_download_cycle(
+        _deps(
+            client=FakeDownloadClient(shared=[shared]),
+            quarantine=quarantine,
+            downloads=downloads,
+            catalog=FakeCatalogReads(),
+            local=local_ok,
+        )
+    )
+    assert downloads.states[_A] is DownloadState.QUARANTINED  # récupéré, plus de boucle infinie
+    assert local_ok.enqueued == [_A]
 
 
 @pytest.mark.asyncio

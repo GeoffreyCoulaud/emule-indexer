@@ -13,6 +13,11 @@ from typing import Protocol
 
 
 class Quarantine(Protocol):
-    """Contrat de mise en quarantaine (spec §8). ``promote`` ne lève qu'en cas d'échec FS."""
+    """Contrat de mise en quarantaine (spec §8). ``promote`` ne lève qu'en cas d'échec FS.
+
+    IDEMPOTENT : re-promouvoir un hash DÉJÀ promu (source consommée, cible en place) est un
+    succès silencieux — la boucle de download retente la séquence post-promote en sécurité après
+    un échec transitoire d'enqueue/set_state (cf. logic-download#0).
+    """
 
     def promote(self, staging_path: Path, ed2k_hash: str) -> None: ...
