@@ -153,6 +153,24 @@ def test_clamav_off_keeps_baseline_rlimits() -> None:
     assert cfg.rlimit_cpu_s == 20
 
 
+def test_clamav_enabled_raises_timeout_to_default() -> None:
+    # sandbox-confinement#1 : avec clamav le budget CPU passe à 120 s ; le timeout wall-clock doit
+    # SUIVRE (sinon le scan est tué à 30 s par communicate → faux positifs sur médias sains lents).
+    cfg = AnalysisConfig.from_env({"ENABLED_CHECKS": "type_sniff,ffprobe,clamav"})
+    assert cfg.timeout_s == 150.0  # >= budget CPU clamav (120 s) + marge
+
+
+def test_clamav_timeout_respects_clamav_override() -> None:
+    cfg = AnalysisConfig.from_env({"ENABLED_CHECKS": "clamav", "ANALYSIS_TIMEOUT_S_CLAMAV": "200"})
+    assert cfg.timeout_s == 200.0
+
+
+def test_explicit_timeout_wins_over_clamav_default() -> None:
+    # override explicite (non suffixé) prioritaire sur le défaut conditionnel (comme les rlimits).
+    cfg = AnalysisConfig.from_env({"ENABLED_CHECKS": "clamav", "ANALYSIS_TIMEOUT_S": "90"})
+    assert cfg.timeout_s == 90.0
+
+
 def test_seccomp_enabled_defaults_true() -> None:
     # ring noyau ON par défaut (prod conteneur : no_new_privs posé).
     assert AnalysisConfig.from_env({}).seccomp_enabled is True

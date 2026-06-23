@@ -82,8 +82,9 @@ ClientFactory = Callable[[AmuleEndpoint], MuleClient]
 # Factory du client de DOWNLOAD : même type d'endpoint, mais le client satisfait
 # MuleDownloadClient (AmuleEcClient satisfait les deux Protocols structurellement, DÉCISION D3).
 DownloadClientFactory = Callable[[AmuleEndpoint], MuleDownloadClient]
-# Factory du verifier : prend l'URL (verifier_url) et rend un ContentVerifier.
-VerifierFactory = Callable[[str], ContentVerifier]
+# Factory du verifier : prend l'URL (verifier_url) + le timeout de lecture (s) et rend un
+# ContentVerifier.
+VerifierFactory = Callable[[str, float], ContentVerifier]
 
 
 def default_download_client_factory(endpoint: AmuleEndpoint) -> MuleDownloadClient:
@@ -91,9 +92,15 @@ def default_download_client_factory(endpoint: AmuleEndpoint) -> MuleDownloadClie
     return AmuleEcClient(endpoint.host, endpoint.port, endpoint.password)
 
 
-def default_verifier_factory(verifier_url: str) -> ContentVerifier:
-    """Un ``HttpContentVerifier`` httpx sur l'URL du verifier (timeout dev raisonnable)."""
-    client = httpx.AsyncClient(base_url=verifier_url, timeout=httpx.Timeout(10.0))
+def default_verifier_factory(verifier_url: str, read_timeout_seconds: float) -> ContentVerifier:
+    """Un ``HttpContentVerifier`` httpx sur l'URL du verifier.
+
+    ``read_timeout_seconds`` (config) doit couvrir le pire cas d'analyse (clamav) — sinon un
+    fichier sain mais lent part en dead-letter (concurrency-async#1). Le ``connect`` reste court
+    (10 s) pour détecter vite un verifier mort sans subir le long read sur l'établissement.
+    """
+    timeout = httpx.Timeout(read_timeout_seconds, connect=10.0)
+    client = httpx.AsyncClient(base_url=verifier_url, timeout=timeout)
     return HttpContentVerifier(client)
 
 
@@ -573,7 +580,11 @@ class CrawlerApp:
             verify_deps: VerifyLoopDeps | None = None
             if self._local_config.verifier_url is not None:
                 self._require_full_config()
-                verifier = self._verifier_factory(self._local_config.verifier_url)
+                verify_config = self._crawler_config.verify
+                assert verify_config is not None  # garanti par _require_full_config (mypy : narrow)
+                verifier = self._verifier_factory(
+                    self._local_config.verifier_url, verify_config.client_timeout_seconds
+                )
                 # Ferme le client verifier au teardown. Le port ``ContentVerifier`` ne déclare
                 # PAS ``aclose`` (détail d'adapter http) → ``# type: ignore`` documenté ; toute
                 # impl passée à la composition (HttpContentVerifier, faux de test) l'expose

@@ -53,12 +53,18 @@ class AnalysisConfig:
             else 512 * 1024 * 1024
         )
         cpu_default = _parse_int(env.get("RLIMIT_CPU_S_CLAMAV"), 120) if clamav_on else 20
+        # Le timeout wall-clock (communicate) DOIT couvrir le budget CPU : avec clamav (CPU 120 s),
+        # un timeout figé à 30 s tuerait le scan d'un média sain lent → faux positif (sandbox-
+        # confinement#1). On relâche donc le défaut conditionnellement, comme les rlimits.
+        timeout_default = (
+            _parse_float(env.get("ANALYSIS_TIMEOUT_S_CLAMAV"), 150.0) if clamav_on else 30.0
+        )
         config = cls(
             enabled_checks=enabled,
             ffprobe_path=env.get("FFPROBE_PATH", "ffprobe"),
             clamscan_path=env.get("CLAMSCAN_PATH", "clamscan"),
             clamav_db_dir=env.get("CLAMAV_DB_DIR", "/clamav-db"),
-            timeout_s=_parse_float(env.get("ANALYSIS_TIMEOUT_S"), 30.0),
+            timeout_s=_parse_float(env.get("ANALYSIS_TIMEOUT_S"), timeout_default),
             rlimit_cpu_s=_parse_int(env.get("RLIMIT_CPU_S"), cpu_default),
             rlimit_as_bytes=_parse_int(env.get("RLIMIT_AS_BYTES"), as_default),
             # RLIMIT_NPROC est PAR-UID GLOBAL (pas par sous-arbre) : 64 est sain UNIQUEMENT parce

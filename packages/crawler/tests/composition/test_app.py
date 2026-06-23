@@ -420,7 +420,7 @@ def test_default_verifier_factory_builds_an_http_verifier() -> None:
     from emule_indexer.adapters.verifier_http import HttpContentVerifier
     from emule_indexer.composition.app import default_verifier_factory
 
-    verifier = default_verifier_factory("http://verifier:8000")
+    verifier = default_verifier_factory("http://verifier:8000", 180.0)
     assert isinstance(verifier, HttpContentVerifier)
 
 
@@ -591,7 +591,7 @@ def _full_crawler_config() -> CrawlerConfig:
         decision_poll_interval_seconds=base.decision_poll_interval_seconds,
         shutdown_deadline_seconds=base.shutdown_deadline_seconds,
         download=DownloadConfig(poll_interval_seconds=30.0, disk_cap_bytes=1_000_000_000),
-        verify=VerifyConfig(poll_interval_seconds=10.0),
+        verify=VerifyConfig(poll_interval_seconds=10.0, client_timeout_seconds=180.0),
     )
 
 
@@ -616,7 +616,7 @@ async def test_observer_mode_runs_without_download_or_verify_loops(
         rng=_NoopRng(),
         signal_hub=RecordingSignal(),
         client_factory=factory,
-        verifier_factory=lambda url: verifier,
+        verifier_factory=lambda url, _timeout: verifier,
     )
     holder["app"] = app
     await asyncio.wait_for(app.run(), timeout=5.0)
@@ -649,7 +649,7 @@ async def test_full_mode_health_ok_runs_both_loops(
         signal_hub=RecordingSignal(),
         client_factory=search_factory,
         download_client_factory=lambda endpoint: download_client,
-        verifier_factory=lambda url: verifier,
+        verifier_factory=lambda url, _timeout: verifier,
     )
     holder["app"] = app
     await asyncio.wait_for(app.run(), timeout=5.0)
@@ -678,7 +678,7 @@ async def test_full_mode_health_failure_is_fail_fast(
         signal_hub=RecordingSignal(),
         client_factory=search_factory,
         download_client_factory=lambda endpoint: FakeDownloadClient(),
-        verifier_factory=lambda url: verifier,
+        verifier_factory=lambda url, _timeout: verifier,
     )
     with pytest.raises(ConfigError, match="verifier"):
         await app.run()
@@ -708,7 +708,7 @@ async def test_full_mode_missing_download_config_is_fail_fast(
         rng=_NoopRng(),
         signal_hub=RecordingSignal(),
         client_factory=lambda endpoint: FakeMuleClient(),
-        verifier_factory=lambda url: FakeContentVerifier(),
+        verifier_factory=lambda url, _timeout: FakeContentVerifier(),
     )
     with pytest.raises(ConfigError, match="download"):
         await app.run()
@@ -738,7 +738,7 @@ async def test_full_mode_missing_crawler_verify_and_download_sections_is_fail_fa
         rng=_NoopRng(),
         signal_hub=RecordingSignal(),
         client_factory=lambda endpoint: FakeMuleClient(),
-        verifier_factory=lambda url: FakeContentVerifier(),
+        verifier_factory=lambda url, _timeout: FakeContentVerifier(),
     )
     with pytest.raises(ConfigError, match="verify"):
         await app.run()
@@ -769,7 +769,7 @@ async def test_full_mode_tolerates_download_daemon_unreachable_at_startup(
         signal_hub=RecordingSignal(),
         client_factory=search_factory,
         download_client_factory=download_factory,
-        verifier_factory=lambda url: verifier,
+        verifier_factory=lambda url, _timeout: verifier,
     )
     holder["app"] = app
     await asyncio.wait_for(app.run(), timeout=5.0)  # ne lève pas : connect toléré
@@ -836,7 +836,7 @@ async def test_full_mode_shutdown_cancels_download_and_verify_loops_promptly(
         signal_hub=RecordingSignal(),
         client_factory=lambda endpoint: FakeMuleClient(),
         download_client_factory=lambda endpoint: FakeDownloadClient(),
-        verifier_factory=lambda url: verifier,
+        verifier_factory=lambda url, _timeout: verifier,
     )
     holder["app"] = app
     # Le garde externe (3 s de temps RÉEL) est BIEN sous le shutdown_deadline (30 s) ET sous les
@@ -873,7 +873,7 @@ async def test_full_mode_shutdown_leaves_no_task_leaked(
         signal_hub=RecordingSignal(),
         client_factory=lambda endpoint: FakeMuleClient(),
         download_client_factory=lambda endpoint: FakeDownloadClient(),
-        verifier_factory=lambda url: verifier,
+        verifier_factory=lambda url, _timeout: verifier,
     )
     holder["app"] = app
     before = asyncio.all_tasks()  # snapshot AVANT (la tâche de test + infra pytest-asyncio)
@@ -1012,7 +1012,7 @@ async def test_emits_crawler_started_full_mode(
         signal_hub=RecordingSignal(),
         client_factory=lambda e: FakeMuleClient(),
         download_client_factory=lambda endpoint: download_client,
-        verifier_factory=lambda url: verifier,
+        verifier_factory=lambda url, _timeout: verifier,
     )
     holder["app"] = app
     with caplog.at_level(logging.INFO, logger="emule_indexer.observability"):

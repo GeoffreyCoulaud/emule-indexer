@@ -21,6 +21,7 @@ download:                            # auto-download (D-download ; activé live 
 
 verify:                              # pipeline de vérification (D-verify ; activé live si verifier_url défini)
   poll_interval_seconds: 10.0        # cadence de claim de la file de vérification quand elle est vide
+  client_timeout_seconds: 180.0      # timeout lecture HTTP vers le verifier ; >= pire cas d'analyse (clamav ~120-150 s)
 
 observability:                       # Plan E — métriques Prometheus + niveau de log
   log_level: INFO                    # DEBUG/INFO/WARNING/ERROR/CRITICAL

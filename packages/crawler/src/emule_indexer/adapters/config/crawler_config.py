@@ -48,9 +48,13 @@ class VerifyConfig:
 
     ``poll_interval_seconds`` : cadence à laquelle la boucle de vérif ``claim`` la file quand
     elle est vide (la file durable est le couplage — pas de nudge dédié, DÉCISION DV5).
+    ``client_timeout_seconds`` : timeout de lecture du client HTTP vers le verifier ; DOIT couvrir
+    le pire cas d'analyse (clamav ~120-150 s) sinon un fichier sain mais lent part en dead-letter
+    sur ReadTimeout (concurrency-async#1). Défaut généreux ; le connect reste court (adapter).
     """
 
     poll_interval_seconds: float
+    client_timeout_seconds: float
 
 
 @dataclass(frozen=True)
@@ -218,7 +222,12 @@ def parse_crawler_config(raw: dict[str, Any]) -> CrawlerConfig:
     if "verify" in raw:
         verify_raw = _require_mapping(raw["verify"], "section 'verify'")
         verify = VerifyConfig(
-            poll_interval_seconds=_positive(verify_raw, "poll_interval_seconds", "verify")
+            poll_interval_seconds=_positive(verify_raw, "poll_interval_seconds", "verify"),
+            client_timeout_seconds=(
+                _positive(verify_raw, "client_timeout_seconds", "verify")
+                if "client_timeout_seconds" in verify_raw
+                else 180.0
+            ),
         )
     observability: ObservabilityConfig | None = None
     if "observability" in raw:

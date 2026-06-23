@@ -45,6 +45,25 @@ def test_parses_a_valid_config() -> None:
     )
 
 
+def test_verify_client_timeout_defaults_to_180_when_absent() -> None:
+    # concurrency-async#1 : le timeout du client HTTP vers le verifier DOIT couvrir le pire cas
+    # d'analyse (clamav ~120-150 s), sinon les fichiers lents partent en dead-letter sur ReadTimeout
+    # alors qu'ils sont sains. Défaut généreux quand le YAML ne le précise pas.
+    raw = _valid_raw()
+    raw["verify"] = {"poll_interval_seconds": 5.0}
+    config = parse_crawler_config(raw)
+    assert config.verify is not None
+    assert config.verify.client_timeout_seconds == 180.0
+
+
+def test_verify_client_timeout_is_parsed_when_present() -> None:
+    raw = _valid_raw()
+    raw["verify"] = {"poll_interval_seconds": 5.0, "client_timeout_seconds": 240.0}
+    config = parse_crawler_config(raw)
+    assert config.verify is not None
+    assert config.verify.client_timeout_seconds == 240.0
+
+
 def test_jitter_ratio_zero_is_accepted() -> None:
     raw = _valid_raw()
     raw["backoff"]["jitter_ratio"] = 0.0  # 0 = aucun jitter (≥ 0 autorisé)
@@ -182,7 +201,7 @@ def test_verify_section_is_parsed_when_present() -> None:
     raw = _valid_raw()
     raw["verify"] = {"poll_interval_seconds": 5.0}
     config = parse_crawler_config(raw)
-    assert config.verify == VerifyConfig(poll_interval_seconds=5.0)
+    assert config.verify == VerifyConfig(poll_interval_seconds=5.0, client_timeout_seconds=180.0)
 
 
 def test_verify_poll_interval_must_be_positive() -> None:
