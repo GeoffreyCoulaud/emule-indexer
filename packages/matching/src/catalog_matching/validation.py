@@ -101,6 +101,12 @@ def _parse_condition(raw: dict[str, Any]) -> Condition:
         return NotDef(operand=_parse_operand(body))
     if not isinstance(body, list):
         raise ConfigError(f"'{key}:' attend une liste d'opérandes, obtenu {type(body).__name__}")
+    if not body:
+        # EBNF §8.3 : operand (',' operand)* = au moins un opérande. Une liste vide donnerait
+        # AllMatcher([]).matches()==all([])==True (matche TOUT) ou AnyMatcher([])==False (muet) :
+        # config dégénérée, rejetée au chargement (fail-fast §8.4). all([])/any([]) reste la
+        # sémantique interne légitime des combinateurs — c'est la CONFIG vide qu'on interdit.
+        raise ConfigError(f"'{key}:' exige au moins un opérande (liste vide reçue)")
     operands = tuple(_parse_operand(item) for item in body)
     if key == "all":
         return AllDef(operands=operands)

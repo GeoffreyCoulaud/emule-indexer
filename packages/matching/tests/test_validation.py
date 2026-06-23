@@ -151,6 +151,20 @@ def test_rule_with_two_condition_keys_raises() -> None:
         )
 
 
+def test_rule_with_empty_all_is_rejected() -> None:
+    # config-validation#0 : AllMatcher([]).matches() == all([]) == True → une règle 'all: []'
+    # matcherait inconditionnellement TOUT fichier (ici en tier=download → auto-download).
+    # L'EBNF §8.3 exige >=1 opérande ; le fail-fast doit la rejeter au chargement.
+    with pytest.raises(ConfigError, match="au moins un opérande"):
+        parse_matcher_config({"rules": [{"name": "pwn", "tier": "download", "all": []}]})
+
+
+def test_rule_with_empty_any_is_rejected() -> None:
+    # Même trou de fail-fast pour 'any: []' (EBNF §8.3 : >=1 opérande), config dégénérée.
+    with pytest.raises(ConfigError, match="au moins un opérande"):
+        parse_matcher_config({"rules": [{"name": "pwn", "tier": "download", "any": []}]})
+
+
 def test_token_ref_missing_name_raises() -> None:
     with pytest.raises(ConfigError, match="token"):
         parse_matcher_config(
