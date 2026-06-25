@@ -23,11 +23,13 @@ Public visé : opérateur / dev / CI. Tout ce qui suit est **extrait du code ré
 Le projet a **deux niveaux** :
 
 1. **Le gate unitaire** (lancé par défaut, **100 % de couverture de branches** imposée). C'est ce
-   que vérifient le hook pre-push et la CI. Le gate est **par paquet** :
+   que vérifient le hook pre-push et la CI. Le gate est **par paquet** (4 paquets) :
 
    ```bash
-   ( cd packages/crawler  && uv run pytest -q )    # tests crawler, 100 % branch
+   ( cd packages/matching && uv run pytest -q )    # tests matching, 100 % branch
+   ( cd packages/crawler  && uv run pytest -q )    # tests crawler,  100 % branch
    ( cd packages/verifier && uv run pytest -q )    # tests verifier, 100 % branch
+   ( cd packages/webui    && uv run pytest -q )    # tests webui,    100 % branch
    ```
 
    > Le gate est **par paquet** : un `uv run pytest` nu depuis la racine **n'est pas** le gate

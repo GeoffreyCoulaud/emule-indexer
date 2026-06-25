@@ -1,6 +1,8 @@
 """`compact_catalog` : compaction d'un catalog.db en une sortie NEUVE (spec compaction §5).
 
-Reconstruction via open_catalog (schéma + triggers, migrations 0001+0002). ATTACH de la source
+Reconstruction via open_catalog (schéma + triggers, TOUTES les migrations catalog appliquées
+dynamiquement — on ne fige PAS les numéros, pour éviter le drift au prochain ajout). ATTACH
+de la source
 (hors transaction — SQLite refuse d'attacher dans une transaction), puis DANS une transaction
 explicite (BEGIN…COMMIT, ROLLBACK best-effort) : copie verbatim des 5 tables intactes (ordre FK),
 copie verbatim du brut RÉCENT (observed_at >= cutoff_date), bucketize du brut ANCIEN

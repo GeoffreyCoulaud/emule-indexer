@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pré-push : refuse le push si un check échoue (mêmes checks que la CI, les 2 paquets).
+# Pré-push : refuse le push si un check échoue (mêmes checks que la CI, les 4 paquets).
 set -euo pipefail
 
 command -v uv >/dev/null 2>&1 || { echo "[pre-push] ERROR: 'uv' introuvable. Installe-le : https://docs.astral.sh/uv/"; exit 1; }

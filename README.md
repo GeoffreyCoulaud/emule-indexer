@@ -21,8 +21,9 @@ Le mode **observer** ne téléchargera rien : il cherchera, cataloguera et notif
 `ed2k://` pour récupérer un fichier d'un clic). Portable (Linux, macOS, Windows via Docker
 Desktop), sans configuration réseau particulière.
 
-> 🐳 Déploiement `docker compose` (profils `observer`/`full`) disponible — voir
-> [`docs/runbook-deployment.md`](docs/runbook-deployment.md). Le mode `observer` ne télécharge rien.
+> 🐳 Déploiement `docker compose` (profils `observer`/`download`, option `monitoring`)
+> disponible — voir [`docs/runbook-deployment.md`](docs/runbook-deployment.md). Le mode
+> `observer` ne télécharge rien.
 
 ## Pour les curieux (comment ça marche)
 
@@ -44,8 +45,10 @@ Desktop), sans configuration réseau particulière.
 ```bash
 git clone <repo> && cd emule-indexer
 ./scripts/setup-dev.sh   # active les hooks Git (core.hooksPath) + installe l'env (uv sync --dev)
+( cd packages/matching && uv run pytest -q )
 ( cd packages/crawler  && uv run pytest -q )
 ( cd packages/verifier && uv run pytest -q )
+( cd packages/webui    && uv run pytest -q )
 ```
 
 > Les **hooks Git ne sont pas activés automatiquement au clone** (sécurité Git) : `setup-dev.sh`

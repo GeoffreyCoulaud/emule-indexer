@@ -204,7 +204,7 @@ docker compose -f examples/<fichier> --profile download up -d webui
 | `/files` | Liste paginée des fichiers ; filtres `?target=`, `?tier=`, `?verdict=`, `?q=` |
 | `/files/{ed2k_hash}` | Détail d'un fichier (observations, décisions, vérifications, explication du matching) |
 | `/targets/{target_id}` | Fichiers d'une cible (alias de `/files?target=`) |
-| `/node` | État du nœud amuled (connexions, état réseau) |
+| `/node` | État du nœud CRAWLER : `node_id` + entrées du `scheduler_state` (last_full_cycle_at, etc.). N'expose PAS l'état réseau amuled (l'EC n'est pas joignable depuis le webui). |
 | `/health` | Healthcheck JSON — répond `{"status": "ok"}` si le service est opérationnel |
 
 ### Variables d'environnement
@@ -215,7 +215,7 @@ docker compose -f examples/<fichier> --profile download up -d webui
 | `LOCAL_DB` | `/data/local/local.db` | Chemin vers la base état local |
 | `TARGETS_CONFIG` | `/app/config/targets.yaml` | Config cibles (montée depuis `./config/crawler/targets.yaml`) |
 | `MATCHER_CONFIG` | `/app/config/matcher.yaml` | Config matcher (montée depuis `./config/crawler/matcher.yaml`) |
-| `WEBUI_HOST` | `0.0.0.0` | Adresse d'écoute |
+| `WEBUI_HOST` | `127.0.0.1` | Adresse d'écoute (loopback par défaut ; le binding sur l'interface du host se règle au niveau du compose, pas de l'app). |
 | `WEBUI_PORT` | `8080` | Port d'écoute (exposé via `${WEBUI_PORT:-8080}:8080`) |
 
 ### Exposition derrière un reverse proxy

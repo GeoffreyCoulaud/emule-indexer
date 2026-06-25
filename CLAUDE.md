@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `emule-indexer` continuously surveils the eMule network (eD2k + Kad, via an aMule client driven over its EC protocol) to recover lost-media episodes of the French dub of *Keroro mission Titar* (aired 2008 on Teletoon), cataloguing all available metadata along the way.
 
-It is a **virtual uv workspace** with three packages: `packages/crawler/` (package `emule_indexer`, dist `emule-indexer`), `packages/verifier/` (package `download_verifier`, dist `download-verifier`), and `packages/matching/` (package `catalog_matching`, dist `catalog-matching`, shared domain).
+It is a **virtual uv workspace** with four packages: `packages/crawler/` (package `emule_indexer`, dist `emule-indexer`), `packages/verifier/` (package `download_verifier`, dist `download-verifier`), `packages/matching/` (package `catalog_matching`, dist `catalog-matching`, shared domain), and `packages/webui/` (package `catalog_webui`, dist `catalog-webui`, read-only catalog viewer).
 
 ## Orientation — read before substantial work
 
@@ -64,7 +64,7 @@ uv run sqlfluff lint packages/crawler/src                    # embedded SQLite m
 uv run python -m catalog_webui._dev.check_templates packages/webui/src/catalog_webui/adapters/templates  # garde templates sans logique
 ```
 
-**The gate is PER PACKAGE** (`cd packages/<pkg> && uv run pytest`). A bare `uv run pytest` from the repo root is **not** the gate: the root has no `[tool.pytest.ini_options]` (so no coverage, no integration-marker deselection), and a root `conftest.py` (`collect_ignore_glob = ["packages/*"]`) makes it collect nothing (exit 5). Tooling split: `[tool.ruff]` / `[tool.mypy]` at root span all three packages; `[tool.pytest]` / `[tool.coverage]` / `[tool.sqlfluff]` are per-package; one root `uv.lock`; `config/` stays at root.
+**The gate is PER PACKAGE** (`cd packages/<pkg> && uv run pytest`). A bare `uv run pytest` from the repo root is **not** the gate: the root has no `[tool.pytest.ini_options]` (so no coverage, no integration-marker deselection), and a root `conftest.py` (`collect_ignore_glob = ["packages/*"]`) makes it collect nothing (exit 5). Tooling split: `[tool.ruff]` / `[tool.mypy]` at root span all four packages; `[tool.pytest]` / `[tool.coverage]` / `[tool.sqlfluff]` are per-package; one root `uv.lock`; `config/` stays at root.
 
 **Single test** (the package-wide `--cov-fail-under=100` makes a lone test "fail" — disable coverage):
 
