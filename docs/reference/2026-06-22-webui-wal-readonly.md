@@ -1,7 +1,16 @@
 # WebUI — lecture WAL vivante inter-conteneurs en mode `ro`
 
 **Date :** 2026-06-22  
-**Statut :** Question ouverte — à valider au premier déploiement homelab
+**Statut (2026-06-25) :** **CLOS — `:ro` abandonné en faveur de `PRAGMA query_only=ON` applicatif.**
+
+> ✅ **Décision prise.** Le montage Docker `:ro` a été **retiré** des `examples/*.yaml` (et de
+> `bricks/compose.core.yaml`). Les bases sont désormais montées **RW** au niveau FS ; la garantie
+> lecture seule reste assurée par `mode=ro` (URI SQLite) + `PRAGMA query_only=ON` côté webui (cf.
+> `catalog_webui/adapters/db.py`). Solution **aussi sûre** au niveau SQL et **plus robuste**
+> vis-à-vis du WAL (pas de risque d'`EROFS` sur `-shm`/`-wal` mmap). Voir runbook d'administration
+> § WebUI (commit `12d9dad`) et le yaml change (commit `b0b5faf`).
+>
+> Le reste du document est conservé comme **trace de la décision** (contexte, alternatives évaluées).
 
 ## Contexte
 
@@ -31,11 +40,15 @@ volumes:
 La garantie applicative reste assurée : `open_ro` ouvre avec `uri=True` et
 `PRAGMA query_only=ON`, ce qui interdit toute écriture au niveau SQL.
 
-## À valider
+## Décision (2026-06-25)
 
-- [ ] Le montage `:ro` fonctionne-t-il quand le crawler tourne simultanément (WAL actif) ?
-- [ ] Le montage `:ro` fonctionne-t-il quand le crawler est arrêté (base en état checkpoint, pas de `-wal`) ?
-- [ ] Documenter le verdict ici et mettre à jour le runbook d'administration en conséquence.
+`:ro` au niveau Docker a été **retiré** sans test homelab préalable parce que les deux pragmas
+applicatifs (`mode=ro` URI + `query_only=ON`) suffisent à garantir la lecture seule au niveau SQL,
+et que le risque d'`EROFS` sur les fichiers WAL auxiliaires rendait le montage `:ro` fragile. La
+solution actuelle est **plus simple** (un seul mécanisme de garantie au lieu de deux) et **plus
+robuste** (pas d'interaction `mmap`/FS).
+
+Les questions originellement listées comme « à valider » sont donc devenues sans objet.
 
 ## Références
 
