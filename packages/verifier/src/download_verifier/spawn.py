@@ -27,6 +27,12 @@ from download_verifier.config import AnalysisConfig
 
 _CHILD_MODULE = "download_verifier.analysis_child"
 _MINIMAL_PATH = "/usr/local/bin:/usr/bin:/bin"
+# Délai borné du reap post-timeout (sandbox-confinement#2) : un descendant compromis qui
+# s'échappe via ``setsid()`` peut garder stdout ouvert (l'EOF n'arrive pas) → ``communicate()``
+# bloquerait indéfiniment, gelant le worker (cf. l'event loop). On borne la fenêtre de reap
+# et on bascule sur un kill ciblé + wait borné si nécessaire. Un orphelin « godille » reste
+# possible mais ne nous bloque plus (gVisor + cgroups bornent son impact).
+_REAP_TIMEOUT_S = 2.0
 
 
 class ChildRunner(Protocol):
@@ -63,7 +69,22 @@ class ProdChildRunner:
             # mort, getpgid lève ProcessLookupError → absorbée.
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            proc.communicate()  # reap : pas de zombie enfant
+            # Fermer le read-end PARENT du pipe stdout (sandbox-confinement#2) : un
+            # descendant qui a échappé via setsid garde son write-end ouvert → l'EOF
+            # n'arrive jamais → ``communicate()`` boucle. En coupant côté parent, on
+            # se libère ; le descendant écrira dans un pipe cassé (SIGPIPE/EPIPE).
+            if proc.stdout is not None:
+                proc.stdout.close()
+            try:
+                proc.wait(timeout=_REAP_TIMEOUT_S)
+            except subprocess.TimeoutExpired:
+                # Dernier ressort : SIGKILL ciblé + wait borné. Si même cela échoue,
+                # l'enfant reste zombie (extrêmement improbable après killpg+kill) — on
+                # se libère quand même, gVisor/cgroups bornent l'orphelin éventuel.
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    proc.wait(timeout=_REAP_TIMEOUT_S)
             return 0, b"", True
         return proc.returncode, stdout, False
 
