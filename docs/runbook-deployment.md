@@ -49,6 +49,12 @@ les fichiers ressortent étiquetés `suspicious` même quand ils sont sains.
 
 ## 1. Choisir sa stack — matrice fonctionnalités × scénario
 
+> **Les stacks A et B exigent un abonnement VPN commercial** supportant **WireGuard** (≈ 2 à 5 €/mois
+> typiquement). Voir la [liste à jour des fournisseurs supportés par gluetun](https://github.com/qdm12/gluetun-wiki/tree/main/setup/providers)
+> pour choisir. Les VPN gratuits (Mullvad free, Windscribe free) ne sont pas vérifiés par gluetun —
+> ils peuvent fonctionner ou non. La stack **B** exige en plus un fournisseur avec **port forwarding**
+> (vérifiez ce point chez le fournisseur avant de payer ; tous ne l'offrent pas).
+
 Repérez la ligne qui correspond à **vos contraintes** (colonnes) et à **votre intention** (vie privée /
 joignabilité) :
 
@@ -59,10 +65,19 @@ joignabilité) :
 | **C** · sans VPN, Low-ID | **Oui** | Non | Non | Oui | Non | Non |
 | **D** · sans VPN, High-ID | **Oui** | **Oui** | **Oui** | Oui | Non | Non |
 
-Cellules non triviales : **B** — le port est forwardé par le **fournisseur VPN** (NAT-PMP), pas la
-box ; **B** incompatible Docker Desktop (socket refusé au port-sync, réf.
-`docs/reference/2026-06-17-docker-desktop-rootless-socket.md`) ; **« expose IP domestique »** = Non
-pour A/B (sortie par le VPN), Oui pour C/D (sortie par la connexion perso, sauf VPN à l'hôte).
+Cellules non triviales :
+
+- **Stack B — comment le High-ID est obtenu** : le crawler demande au VPN le port forwardé puis le
+  pousse à amuled (« port-sync »). Cette boucle exige **trois pièces qui marchent ensemble** : (1) un
+  VPN avec port forwarding **activé** dans `.env`, (2) un service `docker-proxy` qui lit le socket
+  Docker, (3) le `port_sync` armé dans `config/crawler/download.yaml` (étape 3). Si **une seule**
+  manque, le crawler reste en Low-ID sans erreur visible.
+- **Stack B incompatible Docker Desktop** (Win/macOS) : le port-sync a besoin d'un accès direct au
+  socket Docker que Docker Desktop n'expose pas correctement. Voir
+  `docs/reference/2026-06-17-docker-desktop-rootless-socket.md` (état observé en juin 2026, à
+  re-vérifier si Docker Desktop évolue).
+- **« Expose IP domestique »** : Non pour A/B (sortie par le VPN), Oui pour C/D (sortie par la
+  connexion perso, sauf VPN installé directement sur le système d'exploitation hôte).
 
 Mapping stack → fichier de point d'entrée :
 
@@ -81,9 +96,10 @@ Les prérequis *contraignants* figurent déjà comme colonnes dans la matrice. D
 
 - **A** : abonnement VPN WireGuard (n'importe lequel supporté par gluetun) → clé privée dans `.env` ;
   `/dev/net/tun` disponible sur l'hôte (fourni aussi par Docker Desktop). Aucun port à ouvrir.
-- **B** : **hôte Linux Docker rootful** + VPN **avec port forwarding** (ProtonVPN, PIA, PrivateVPN,
-  PerfectPrivacy) → clé dans `.env` ; armer le bloc `port_sync` dans
-  `config/crawler/download.yaml` (voir étape 3).
+- **B** : **hôte Linux Docker rootful** + VPN **avec port forwarding** (cherchez les fournisseurs
+  marqués `PORT_FORWARDING: yes` dans la [liste gluetun](https://github.com/qdm12/gluetun-wiki/tree/main/setup/providers)
+  — en juin 2026, ProtonVPN, PIA, PrivateVPN et PerfectPrivacy sont éligibles) → clé dans `.env` ;
+  armer le bloc `port_sync` dans `config/crawler/download.yaml` (voir étape 3).
 - **C** : rien de spécial, le plus simple. ⚠ ton IP domestique est exposée aux pairs (mets un VPN au
   niveau hôte pour l'éviter).
 - **D** : rediriger `LISTEN_PORT` (TCP + UDP) sur ta box vers cette machine + autoriser au pare-feu
