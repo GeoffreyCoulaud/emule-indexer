@@ -33,6 +33,14 @@ class SearchFailed:
 
 
 @dataclass(frozen=True)
+class SearchTaskDropped:
+    # Toutes les instances en backoff ont refusé cette tâche pendant le cycle (spec §14) :
+    # aucun worker ne peut la traiter → on l'abandonne et on trace pour la visibilité.
+    keyword: str
+    network: str
+
+
+@dataclass(frozen=True)
 class AllInstancesBlind:
     first_occurrence: bool
 
@@ -114,6 +122,7 @@ type Event = (
     | SearchExecuted
     | InstanceUnreachable
     | SearchFailed
+    | SearchTaskDropped
     | AllInstancesBlind
     | ObservationRecorded
     | DecisionRecorded

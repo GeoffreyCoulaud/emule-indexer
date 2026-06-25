@@ -88,6 +88,8 @@ def _deps(
     engine: MatchingEngine,
     clock: FakeClock,
     backoff: BackoffRegistry,
+    *,
+    telemetry: RecordingTelemetry | None = None,
 ) -> WorkerDeps:
     return WorkerDeps(
         catalog=catalog,
@@ -97,7 +99,7 @@ def _deps(
         rng=_NoopRng(),
         policy=_POLICY,
         backoff=backoff,
-        telemetry=RecordingTelemetry(),
+        telemetry=telemetry or RecordingTelemetry(),
     )
 
 
@@ -402,6 +404,93 @@ async def test_drained_queue_skips_the_final_pause_with_two_workers(
     # chaque travailleur est sautée car la file est vidée).
     assert all(s == 1.0 for s in clock.sleeps)
     assert 0 < len(clock.sleeps) < n_items
+
+
+@pytest.mark.asyncio
+async def test_worker_in_backoff_does_not_consume_peers_tasks(
+    catalog: SqliteCatalogRepository,
+    local_connection: sqlite3.Connection,
+    engine: MatchingEngine,
+) -> None:
+    # Régression logic-search#0 (spec §14 « PAS DE PERTE ») : un worker dont l'instance est en
+    # backoff ne doit PAS drainer/jeter les tâches restantes. La queue est partagée → si A
+    # est en backoff et B sain, B doit traiter TOUTES les tâches (pas la moitié).
+    from emule_indexer.application.run_search_cycle import _CHANNELS
+    from emule_indexer.domain.search.keywords import generate_keywords
+
+    n_items = len(generate_keywords(_TARGETS)) * len(_CHANNELS)
+    clock = FakeClock()
+    backoff = BackoffRegistry(_POLICY, clock, FakeRng())
+    # 4 échecs cumulés → base × factor^3 = 2×8 = 16 s, retry_after très au-delà des pauses
+    # cumulées du cycle (au plus 9s avec 10 items × pause 1.0s, hors dernier).
+    for _ in range(4):
+        backoff.record_failure("amule-1")
+    client_a = FakeMuleClient()
+    client_b = FakeMuleClient()
+    deps = _deps(catalog, engine, clock, backoff)
+    workers = [_worker("amule-1", client_a, deps), _worker("amule-2", client_b, deps)]
+    scheduler_state = SqliteSchedulerStateRepository(local_connection)
+    await run_search_cycle(
+        workers=workers,
+        clients=[client_a, client_b],
+        targets=_TARGETS,
+        rng=_NoopRng(),
+        node_id="node-A",
+        cycle_index=0,
+        scheduler_state=scheduler_state,
+        backoff=backoff,
+        clock=clock,
+        telemetry=RecordingTelemetry(),
+        edge=EdgeState(),
+    )
+    assert client_a.searches == []  # A en backoff → n'exécute aucune recherche
+    assert len(client_b.searches) == n_items  # B traite TOUTES les tâches (zéro perte)
+
+
+@pytest.mark.asyncio
+async def test_all_workers_in_backoff_drop_tasks_with_telemetry(
+    catalog: SqliteCatalogRepository,
+    local_connection: sqlite3.Connection,
+    engine: MatchingEngine,
+) -> None:
+    # Cas terminal : si TOUTES les instances sont en backoff, plus personne ne peut traiter →
+    # les tâches sont DROP avec une trace de télémétrie (visibilité), et le cycle se termine
+    # quand même (queue drainée, index avance).
+    from emule_indexer.application.run_search_cycle import _CHANNELS
+    from emule_indexer.domain.observability.events import SearchTaskDropped
+    from emule_indexer.domain.search.keywords import generate_keywords
+
+    n_items = len(generate_keywords(_TARGETS)) * len(_CHANNELS)
+    clock = FakeClock()
+    backoff = BackoffRegistry(_POLICY, clock, FakeRng())
+    # 4 échecs par instance → backoff au-delà de la durée du cycle (cf. test précédent).
+    for _ in range(4):
+        backoff.record_failure("amule-1")
+        backoff.record_failure("amule-2")
+    client_a = FakeMuleClient()
+    client_b = FakeMuleClient()
+    telemetry = RecordingTelemetry()
+    deps = _deps(catalog, engine, clock, backoff, telemetry=telemetry)
+    workers = [_worker("amule-1", client_a, deps), _worker("amule-2", client_b, deps)]
+    scheduler_state = SqliteSchedulerStateRepository(local_connection)
+    await run_search_cycle(
+        workers=workers,
+        clients=[client_a, client_b],
+        targets=_TARGETS,
+        rng=_NoopRng(),
+        node_id="node-A",
+        cycle_index=0,
+        scheduler_state=scheduler_state,
+        backoff=backoff,
+        clock=clock,
+        telemetry=telemetry,
+        edge=EdgeState(),
+    )
+    assert client_a.searches == []
+    assert client_b.searches == []
+    drops = [e for e in telemetry.events if isinstance(e, SearchTaskDropped)]
+    assert len(drops) == n_items  # une trace par tâche perdue (visibilité opérationnelle)
+    assert scheduler_state.read_cycle_index() == 1  # le cycle se termine quand même
 
 
 @pytest.mark.asyncio

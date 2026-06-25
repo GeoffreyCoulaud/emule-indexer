@@ -96,19 +96,45 @@ async def _aggregate_coverage(
         edge.leave("coverage_blind")
 
 
-async def _worker_loop(worker: SearchWorker, queue: "asyncio.Queue[SearchTask | None]") -> None:
+async def _worker_loop(
+    worker: SearchWorker,
+    queue: "asyncio.LifoQueue[SearchTask | None]",
+    n_workers: int,
+) -> None:
     """Draine la queue jusqu'à la sentinelle ``None`` (un travailleur).
 
     PAUSE JITTERÉE inter-mots-clés (spec §5/§7) ENTRE deux items, JAMAIS après le dernier :
     si la file est déjà vidée après cet item, on saute la pause (inutile de dormir avant de
     sortir / d'attendre une sentinelle). La pause espace les recherches d'un même travailleur
     → ``amuled`` évite de se faire bannir d'un serveur eD2k.
+
+    SKIP ⇒ RE-ENFILE (spec §14 « PAS DE PERTE », logic-search#0) : si la tâche tirée tombe
+    sur une clé de backoff de CE travailleur (instance OU canal), elle est REMISE en queue
+    (avec self ajouté à ``skipped_by``) puis l'event loop est cédé via ``asyncio.sleep(0)``
+    pour qu'un pair sain la prenne. Quand TOUS les workers ont refusé (``len(skipped_by) >=
+    n_workers``), la tâche est abandonnée avec ``SearchTaskDropped`` (visibilité plutôt que
+    silence). Sans cette logique, un travailleur en backoff drainait synchronement les tâches
+    restantes pendant qu'un pair sain restait parqué sur un ``await`` réseau (queue.get sur
+    file non vide ne CÈDE PAS — pas d'``await`` interne).
     """
     while True:
         task = await queue.get()
         try:
             if task is None:
                 return
+            if worker.is_blocked_for(task):
+                # Union idempotente : re-pioche de la même tâche par soi-même ne fait pas
+                # grossir ``skipped_by`` (frozenset). Avec LIFO la re-enfile est au sommet →
+                # pioché par un PAIR au tour suivant → l'ensemble grossit jusqu'au drop.
+                new_skipped = task.skipped_by | {worker.instance_name}
+                if len(new_skipped) >= n_workers:
+                    await worker.report_dropped(task)
+                    continue
+                queue.put_nowait(
+                    SearchTask(keyword=task.keyword, channel=task.channel, skipped_by=new_skipped)
+                )
+                await asyncio.sleep(0)  # cède la main → un pair peut prendre la tâche
+                continue
             await worker.run_task(task)
             if not queue.empty():  # encore des items réels → on espace avant le suivant
                 await worker.pause_between_items()
@@ -136,7 +162,11 @@ async def run_search_cycle(
     keywords = generate_keywords(targets)
     texts = tuple(keyword.text for keyword in keywords)
     ordered = shuffle_for_cycle(texts, rng, node_id, cycle_index)
-    queue: asyncio.Queue[SearchTask | None] = asyncio.Queue()
+    # LIFO (logic-search#0) : une tâche re-enfilée par un worker en backoff doit être
+    # immédiatement disponible pour un PAIR (pas re-tirée par le même worker via FIFO →
+    # boucle infinie quand toutes les instances sont en backoff). Avec LIFO, la re-enfile
+    # est au sommet → le worker suivant la prend → ou bien tous l'ont refusée et on DROP.
+    queue: asyncio.LifoQueue[SearchTask | None] = asyncio.LifoQueue()
     for text in ordered:
         for channel in _CHANNELS:
             queue.put_nowait(SearchTask(keyword=text, channel=channel))
@@ -147,9 +177,10 @@ async def run_search_cycle(
         len(_CHANNELS),
         queue.qsize(),
     )
+    n_workers = len(workers)
     async with asyncio.TaskGroup() as group:
         for worker in workers:
-            group.create_task(_worker_loop(worker, queue))
+            group.create_task(_worker_loop(worker, queue, n_workers))
         await queue.join()
         for _ in workers:
             queue.put_nowait(None)

@@ -37,6 +37,7 @@ from emule_indexer.domain.observability.events import (
     InstanceUnreachable,
     SearchExecuted,
     SearchFailed,
+    SearchTaskDropped,
 )
 from emule_indexer.domain.search.backoff import backoff_delay
 from emule_indexer.ports.catalog_repository import CatalogRepository
@@ -66,10 +67,17 @@ def _iso(moment: datetime) -> str:
 
 @dataclass(frozen=True)
 class SearchTask:
-    """Une unité de travail : un mot-clé sur un canal (spec §4)."""
+    """Une unité de travail : un mot-clé sur un canal (spec §4).
+
+    ``skipped_by`` mémorise les ``instance_name`` qui ont déjà refusé cette tâche pendant le
+    cycle (backoff instance ou canal). Une tâche re-enfilée porte cette trace pour permettre
+    la terminaison : quand TOUTES les instances ont refusé, la boucle abandonne la tâche avec
+    une trace de télémétrie (spec §14 : visibilité plutôt que silence). ``frozenset`` →
+    union idempotente, hashable (compatible ``dataclass(frozen=True)``)."""
 
     keyword: str
     channel: SearchChannel
+    skipped_by: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -175,6 +183,28 @@ class SearchWorker:
         self._client = client
         self._deps = deps
         self._connected = False
+
+    @property
+    def instance_name(self) -> str:
+        """Nom logique de l'instance pilotée (clé de backoff + identifiant ``skipped_by``)."""
+        return self._instance
+
+    def is_blocked_for(self, task: SearchTask) -> bool:
+        """``True`` si l'instance OU le canal de la tâche est en backoff (skip+re-enfile, §14)."""
+        if self._deps.backoff.is_in_backoff(self._instance):
+            return True
+        return self._deps.backoff.is_in_backoff(f"{self._instance}:{task.channel}")
+
+    async def report_dropped(self, task: SearchTask) -> None:
+        """Trace l'abandon d'une tâche refusée par TOUTES les instances (spec §14)."""
+        _logger.warning(
+            "tâche '%s'/%s abandonnée (toutes les instances en backoff)",
+            task.keyword,
+            task.channel,
+        )
+        await self._deps.telemetry.emit(
+            SearchTaskDropped(keyword=task.keyword, network=network_label(task.channel))
+        )
 
     async def _ensure_connected(self) -> bool:
         """Connecte le client si nécessaire. Rend ``False`` si l'instance reste down."""

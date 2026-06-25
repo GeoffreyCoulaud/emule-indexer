@@ -31,6 +31,7 @@ from emule_indexer.domain.observability.events import (
     SearchCycleCompleted,
     SearchExecuted,
     SearchFailed,
+    SearchTaskDropped,
     VerificationCompleted,
     VerificationQueueDepthSampled,
     VerifierUnavailable,
@@ -61,6 +62,7 @@ class MetricName(StrEnum):
     SEARCHES = "emule_searches"
     OBSERVATIONS = "emule_observations"
     SEARCH_FAILURES = "emule_search_failures"
+    SEARCH_TASKS_DROPPED = "emule_search_tasks_dropped"
     MULE_UNREACHABLE = "emule_mule_unreachable"
     SEARCH_BLIND_CYCLES = "emule_search_blind_cycles"
     DECISIONS = "emule_decisions"
@@ -171,6 +173,17 @@ def describe(event: Event) -> Report:
                 (
                     MetricInstruction(
                         MetricName.SEARCH_FAILURES, "inc", (("network", event.network),)
+                    ),
+                ),
+            )
+        case SearchTaskDropped():
+            return Report(
+                Severity.WARNING,
+                f"tâche '{event.keyword}'/{event.network} abandonnée "
+                "(toutes les instances en backoff)",
+                (
+                    MetricInstruction(
+                        MetricName.SEARCH_TASKS_DROPPED, "inc", (("network", event.network),)
                     ),
                 ),
             )
