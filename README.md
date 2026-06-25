@@ -18,12 +18,25 @@ quand un épisode manquant apparaît.
 ## Pour les chercheurs (faire tourner un nœud)
 
 Le mode **observer** ne téléchargera rien : il cherchera, cataloguera et notifiera (avec un lien
-`ed2k://` pour récupérer un fichier d'un clic). Portable (Linux, macOS, Windows via Docker
-Desktop), sans configuration réseau particulière.
+`ed2k://` à ouvrir avec aMule pour récupérer un fichier). Portable sur Linux, macOS, Windows (via
+Docker Desktop) en mode **observer** ; le mode **High-ID** (optimisation des sources) exige Docker
+rootful natif sur **Linux**.
+
+Quatre stacks de déploiement disponibles selon votre besoin :
+- **A** observer derrière VPN (recommandé pour la confidentialité, demande un abonnement VPN avec
+  WireGuard ≈ 2-5 €/mois) ;
+- **B** download + High-ID derrière VPN (demande un VPN à port forwarding) ;
+- **C** observer sans VPN (votre IP domestique est visible des pairs eMule) ;
+- **D** download + High-ID sans VPN, port ouvert sur la box (votre IP domestique exposée).
+
+Pour la confidentialité, **préférez A ou B**. Détails et matrice complète dans le
+[runbook de déploiement](docs/runbook-deployment.md) ; les implications légales et de
+confidentialité sont discutées franchement dans
+[légalité et confidentialité](docs/legal-and-privacy.md).
 
 > 🐳 Déploiement `docker compose` (profils `observer`/`download`, option `monitoring`)
-> disponible — voir [`docs/runbook-deployment.md`](docs/runbook-deployment.md). Le mode
-> `observer` ne télécharge rien.
+> disponible — voir [`docs/runbook-deployment.md`](docs/runbook-deployment.md). Pour résoudre un
+> problème : [`docs/runbook-troubleshooting.md`](docs/runbook-troubleshooting.md).
 
 ## Pour les curieux (comment ça marche)
 
@@ -60,7 +73,14 @@ git clone <repo> && cd emule-indexer
 - Plans d'implémentation : [`docs/superpowers/plans/`](docs/superpowers/plans/)
 - Déploiement (Docker / compose) : [`docs/runbook-deployment.md`](docs/runbook-deployment.md)
 
-## Statut
+## Statut fonctionnel (juin 2026)
 
-🚧 En construction — fondations posées (toolchain, CI, normalisation). Feuille de route
-détaillée dans la spec et les plans.
+| Capacité | État | Détails |
+|---|---|---|
+| Observer (recherche + catalogage + WebUI) | ✅ Stable | Sur les 4 stacks. |
+| Download (téléchargement + vérification) | ⚠️ Fonctionnel, non éprouvé en prod réelle | Chaîne complète confirmée par lecture des sources amont d'amuled ; la suite e2e bout-en-bout a été abandonnée, voir [admin § Limites connues](docs/runbook-administration.md#limites-connues--follow-ups). |
+| High-ID via port-sync (Route A) | ⚠️ Construit, validation bout-en-bout pendante | Exige Docker rootful Linux. Cf. runbook-admin. |
+| High-ID via port-forward manuel (Route B) | ✅ Fonctionnel | N'importe quelle plateforme avec port redirigé. |
+| Antivirus (clamav) | ⚠️ Activé par défaut en download ; rlimits non validés en prod | Hypothèse de calibration à éprouver en homelab, voir [admin § clamav](docs/runbook-administration.md#analyse-antivirus-clamav--provisioning--réglage). |
+| Multi-instances / fusion catalogues | ✅ Outil `merge` disponible | Cycle de partage hors-ligne, voir [docs/README § Collaboration](docs/README.md#collaboration-entre-chercheurs). |
+| Hub central / notifications inter-nœuds | ❌ Non-objectif v0.x | Non prévu. |
