@@ -1,5 +1,15 @@
 # Rapport d'audit consolidé — emule-indexer
 
+> ⚠️ **SNAPSHOT FIGÉ — audit du 2026-06-23.** Ce rapport était correct à cette date.
+> Depuis, les findings peuvent avoir été :
+> - **résolus** (corrigés en commits ultérieurs — consultez `git log -- packages/` depuis 2026-06-23) ;
+> - **tranchés en choix délibérés** (cf. commits taggés `docs(audit): trancher les contestés` /
+>   `docs: corriger les drifts repérés par l'audit 2026-06-23`) ;
+> - **invalidés** par une refonte ultérieure du code.
+>
+> Pour le statut courant des éléments cités ici, vérifier le code ou demander un nouvel audit.
+> Ce document est conservé comme **trace historique**, pas comme état de référence.
+
 ## Résumé exécutif
 
 **59 findings** issus de 17 perspectives, chacun passé par deux vérificateurs adversariaux (lentille reproduction + lentille faux-positif). Après consolidation des verdicts :
