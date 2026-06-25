@@ -101,12 +101,25 @@ class FakeQuarantine:
 
 
 class FakeDownloadRepo:
-    """Repo downloads en mémoire (le contrat de SqliteDownloadRepository, sans SQL)."""
+    """Repo downloads en mémoire (le contrat de SqliteDownloadRepository, sans SQL).
 
-    def __init__(self, *, fail_record: bool = False) -> None:
+    ``fail_set_state_for`` : hashes pour lesquels ``set_state`` lève ``RepositoryError`` —
+    permet de simuler un échec repo MILIEU de cycle (cf. logic-download#2/error-boundary#2).
+    ``fail_active_states`` : ``active_states()`` lève — permet de simuler la persistance KO
+    aussi à la relecture (toutes les étapes du cycle absorbent)."""
+
+    def __init__(
+        self,
+        *,
+        fail_record: bool = False,
+        fail_set_state_for: set[str] | None = None,
+        fail_active_states: bool = False,
+    ) -> None:
         self.states: dict[str, DownloadState] = {}
         self.sizes: dict[str, int] = {}
         self._fail_record = fail_record
+        self._fail_set_state_for = fail_set_state_for or set()
+        self._fail_active_states = fail_active_states
         self._target_ids: dict[str, str] = {}
 
     def get_target_id(self, ed2k_hash: str) -> str | None:
@@ -122,6 +135,8 @@ class FakeDownloadRepo:
         return True
 
     def set_state(self, ed2k_hash: str, state: DownloadState) -> None:
+        if ed2k_hash in self._fail_set_state_for:
+            raise RepositoryError(f"set_state({ed2k_hash}) en échec")
         self.states[ed2k_hash] = state
 
     def is_downloaded(self, ed2k_hash: str) -> bool:
@@ -135,6 +150,8 @@ class FakeDownloadRepo:
         )
 
     def active_states(self) -> dict[str, DownloadState]:
+        if self._fail_active_states:
+            raise RepositoryError("active_states en échec")
         return dict(self.states)
 
 
@@ -425,6 +442,92 @@ async def test_repository_error_is_absorbed() -> None:
         local=FakeLocalRepo(),
     )
     await run_download_cycle(deps)  # ne lève pas (RepositoryError absorbée)
+
+
+@pytest.mark.asyncio
+async def test_monitor_repo_error_still_promotes_completions_in_same_cycle() -> None:
+    # Régression logic-download#2 : si ``_monitor`` lève ``RepositoryError`` (set_state KO sur
+    # un autre hash), l'ancien code posait ``states={}`` puis appelait ``_handle_completions``
+    # → chaque hash partagé → ``states.get(...) is None`` → ignoré → AUCUNE complétion promue
+    # du cycle entier (latence +1 cycle alors qu'on a déjà le signal). Le fix relit
+    # ``active_states()`` AVANT ``_handle_completions`` pour que les complétions soient vues.
+    client = FakeDownloadClient(
+        queue=[
+            (
+                DownloadEntry(ed2k_hash=_A, size_done=0, size_full=0),
+                DownloadEntry(ed2k_hash=_B, size_done=0, size_full=0),
+            )
+        ],
+        shared=[(SharedFileEntry(ed2k_hash=_A, name="keroro_062a.avi"),)],
+    )
+    downloads = FakeDownloadRepo(fail_set_state_for={_B})
+    # _A déjà DOWNLOADING (pas de transition par _monitor) ; _B QUEUED → _monitor tentera
+    # set_state(_B, DOWNLOADING) qui lève → l'étape 1 plante, mais _A est complet dans shared.
+    downloads.states[_A] = DownloadState.DOWNLOADING
+    downloads.states[_B] = DownloadState.QUEUED
+    quarantine = FakeQuarantine()
+    local = FakeLocalRepo()
+    deps = _deps(
+        client=client,
+        quarantine=quarantine,
+        downloads=downloads,
+        catalog=FakeCatalogReads(),
+        local=local,
+    )
+    await run_download_cycle(deps)
+    assert local.enqueued == [_A]  # la complétion d'_A est promue malgré l'échec de _monitor
+    assert downloads.states[_A] is DownloadState.QUARANTINED
+
+
+@pytest.mark.asyncio
+async def test_active_states_repo_failure_is_absorbed_at_step_2() -> None:
+    # ``active_states`` qui lève EN BOUCLE (panne repo persistante) : l'étape 1 absorbe, puis la
+    # relecture de l'étape 2 (logic-download#2) absorbe à son tour → le cycle se termine sans
+    # crasher la boucle (le cycle suivant rejouera). On exerce ICI la branche
+    # ``except RepositoryError`` de l'étape 2 séparément de celle de l'étape 1.
+    client = FakeDownloadClient()
+    downloads = FakeDownloadRepo(fail_active_states=True)
+    deps = _deps(
+        client=client,
+        quarantine=FakeQuarantine(),
+        downloads=downloads,
+        catalog=FakeCatalogReads(),
+        local=FakeLocalRepo(),
+    )
+    await run_download_cycle(deps)  # ne lève pas (les deux RepositoryError sont absorbés)
+
+
+@pytest.mark.asyncio
+async def test_one_hash_repo_failure_does_not_starve_other_completions() -> None:
+    # Régression error-boundary#2 : une ``RepositoryError`` dans ``_promote_completion`` du hash N
+    # remontait jusqu'au handler de cycle, abandonnant N+1, N+2 du même shared_files. Le fix isole
+    # PAR HASH (try/except autour de _promote_completion), respectant l'intention « isolé par
+    # étape » du commentaire (I2).
+    client = FakeDownloadClient(
+        shared=[
+            (
+                SharedFileEntry(ed2k_hash=_A, name="a.avi"),
+                SharedFileEntry(ed2k_hash=_B, name="b.avi"),
+            )
+        ],
+    )
+    # _A et _B en DOWNLOADING ; set_state(_A, ...) plante → _promote_completion d'_A lève ;
+    # _B doit néanmoins être promu (continuité intra-cycle).
+    downloads = FakeDownloadRepo(fail_set_state_for={_A})
+    downloads.states[_A] = DownloadState.DOWNLOADING
+    downloads.states[_B] = DownloadState.DOWNLOADING
+    quarantine = FakeQuarantine()
+    local = FakeLocalRepo()
+    deps = _deps(
+        client=client,
+        quarantine=quarantine,
+        downloads=downloads,
+        catalog=FakeCatalogReads(),
+        local=local,
+    )
+    await run_download_cycle(deps)
+    assert _B in local.enqueued  # _B est promu malgré l'échec sur _A
+    assert downloads.states[_B] is DownloadState.QUARANTINED
 
 
 @pytest.mark.asyncio

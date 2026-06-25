@@ -227,6 +227,11 @@ async def _handle_completions(deps: DownloadDeps, states: dict[str, DownloadStat
 
     Présence dans les partagés = complétion POSITIVE (fichier déjà déplacé/en place, auto-partagé
     par amuled). On promeut avec le vrai nom. Les hash terminaux (quarantined/failed) sont ignorés.
+
+    Isolation PAR HASH (error-boundary#2) : une ``RepositoryError`` dans la promotion d'un hash
+    est loggée et CONTINUE avec les suivants. Sans ce filet, une panne repo sur le hash N
+    abandonnait N+1, N+2 du même cycle (signal de complétion ré-évalué au cycle suivant ; pas
+    de perte définitive, mais famine intra-cycle non souhaitable).
     """
     shared = await deps.client.shared_files()
     for entry in shared:
@@ -235,7 +240,14 @@ async def _handle_completions(deps: DownloadDeps, states: dict[str, DownloadStat
             continue  # fichier partagé hors crawler : ignoré
         if current in {DownloadState.QUARANTINED, DownloadState.FAILED}:
             continue  # déjà promu / échoué
-        await _promote_completion(deps, entry.ed2k_hash, entry.name, current, states)
+        try:
+            await _promote_completion(deps, entry.ed2k_hash, entry.name, current, states)
+        except RepositoryError as error:
+            _logger.error(
+                "complétion hash=%s en échec repo (%s) — hash sauté, continue",
+                entry.ed2k_hash,
+                error,
+            )
 
 
 async def _queue_new_candidates(deps: DownloadDeps) -> None:
@@ -334,11 +346,16 @@ async def run_download_cycle(deps: DownloadDeps) -> None:
         return
     except RepositoryError as error:
         _logger.error("monitor download en échec repo (%s) — étape sautée, continue", error)
-        states = {}
+    # Étape 2 — COMPLÉTIONS : on RELIT ``active_states`` FRAÎCHEMENT (logic-download#2). Sans ça,
+    # un échec en étape 1 laissait ``states`` figé/vide → chaque hash partagé → ``states.get is
+    # None`` → ignoré → AUCUNE complétion promue du cycle entier. La relecture est aussi mieux
+    # alignée que ``states={}`` avec le cas nominal (états frais), au prix d'un appel repo
+    # supplémentaire (idempotent). Un échec de la relecture elle-même est attrapé en aval.
     # Étapes 2 & 3 — AUCUN I/O client → seul RepositoryError possible, ISOLÉ par étape (I2) :
     # un échec repo de l'une ne doit PAS empêcher l'autre de tourner.
     try:
-        await _handle_completions(deps, states)
+        fresh_states = deps.downloads.active_states()
+        await _handle_completions(deps, fresh_states)
     except MuleUnreachableError as error:
         _logger.warning("daemon download injoignable (%s) — itération sautée, retry", error)
         return
