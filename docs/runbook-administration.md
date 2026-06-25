@@ -364,32 +364,43 @@ webui.example.com {
 
 ## Limites connues / follow-ups
 
-- **Ring noyau — posture ACTÉE (2026-06-17)** : le ring noyau par-enfant « étendu » (`net=none`,
-  bwrap/montages RO réels, tmpfs dédié) est un **non-objectif assumé**, pas un manque. Chacun exige
-  `CAP_SYS_ADMIN` (régression du `cap_drop: ALL`) ou des user namespaces non privilégiés (non
-  portables : dépendants d'un sysctl hôte, en conflit avec le seccomp par défaut de Docker, et
-  `bwrap` sous gVisor est fragile), pour un gain **marginal** face aux anneaux déjà en place (le
-  seccomp par-enfant EPERM-deny déjà les sockets ; le réseau du verifier n'a **aucun egress** via
-  `internal: true` ; le rootfs est `read_only`). **gVisor (`runsc`) EST l'anneau noyau** — noyau en
-  espace utilisateur qui virtualise réseau + FS au niveau syscall — fourni en **opt-in**
-  (knob `CONTAINER_RUNTIME=runsc`, voir « Durcissement noyau » plus haut). Plancher portable universel =
-  conteneur durci (`cap_drop: ALL`, `no-new-privileges`, `read_only`, `internal`) + seccomp
-  par-enfant + rlimits, sur **n'importe quel** hôte Docker ; gVisor en bolt-on pour les hôtes qui
-  supportent `runsc`. (Passer le seccomp par-enfant de blocklist à allowlist a été **écarté** : trop
-  fragile, risque de faux positifs sur un média sain.)
+- **Sandbox noyau (gVisor) — choix actés (2026-06-17)** : la sandbox optionnelle gVisor (`runsc`)
+  est la couche d'isolation noyau retenue pour le projet. Plusieurs alternatives ont été évaluées
+  puis **écartées explicitement** :
+  - Isolation par-enfant « étendue » (`net=none`, bwrap/montages RO réels, tmpfs dédié) :
+    chacune de ces options exige `CAP_SYS_ADMIN` (qui annulerait le `cap_drop: ALL` du conteneur)
+    ou des user namespaces non privilégiés (non portables : dépendants d'un réglage sysctl hôte,
+    en conflit avec le seccomp par défaut de Docker, et bwrap sous gVisor est fragile). Gain
+    **marginal** face aux protections déjà en place (le seccomp par-enfant refuse déjà les sockets ;
+    le réseau du verifier n'a **aucune sortie Internet** via `internal: true` ; le rootfs est
+    monté en lecture seule).
+  - Seccomp en mode « allowlist » (autoriser explicitement une liste fermée d'appels système) :
+    **écarté** car trop fragile, risque de faux positifs sur un média sain. Le seccomp par-enfant
+    actuel utilise une **blocklist** (refuser explicitement les appels dangereux) — moins strict
+    mais plus robuste.
+
+  **Plancher portable universel** = conteneur durci (`cap_drop: ALL`, `no-new-privileges`,
+  `read_only`, `internal`) + seccomp par-enfant + rlimits, sur **n'importe quel** hôte Docker.
+  **gVisor en supplément** pour les hôtes Linux qui ont le runtime `runsc` enregistré (cf.
+  « Durcissement noyau » plus haut).
 - **port-sync — validation réelle** : la boucle est construite ; sa validation **bout-en-bout**
   (port-check High-ID réel derrière le VPN) se fait via un déploiement réel.
-- **DV10 (download → quarantaine) — CONFIRMÉ par lecture de la source amont d'amuled**
-  (cf. [`docs/reference/2026-06-17-amuled-completion-behavior.md`](reference/2026-06-17-amuled-completion-behavior.md)).
-  À la complétion, amuled déplace le fichier vers son **IncomingDir** ; le statut ne passe complet
-  qu'**après** le déplacement (pas de race). Le crawler détecte la complétion par la **présence du
-  fichier dans les partagés EC** (signal positif, auto-partagé par amuled à la complétion) et promeut
-  au **vrai nom on-disk** rapporté par amuled — la collision de nom (`nom(0).ext`) est donc gérée par
-  construction. Les **contraintes de déploiement** qui en découlent (IncomingDir = quarantaine, FS
-  Linux, pas de catégories, amuled dédié) sont décrites dans le
-  [runbook de déploiement](runbook-deployment.md) (mode download). *(La suite e2e « transfert réel » qui
-  aurait validé la chaîne complète a été abandonnée — voir le guide des tests ; le décodage
-  `shared_files()` contre un vrai amuled est, lui, couvert par `download_integration`.)*
+- **DV10 (download → quarantaine)** — Statut : **chaîne complète confirmée par lecture des sources
+  amont d'amuled** (cf. [`docs/reference/2026-06-17-amuled-completion-behavior.md`](reference/2026-06-17-amuled-completion-behavior.md)),
+  mais **non validée par un test bout-en-bout sur transfert réel** (la suite e2e correspondante a
+  été abandonnée — voir le guide des tests). Le décodage `shared_files()` contre un vrai amuled est
+  en revanche couvert par `download_integration`. Conséquence : si vous montez un nœud en mode
+  download, considérez la chaîne complète comme **fonctionnelle d'après lecture du code** mais
+  **non éprouvée en production réelle** ; remontez tout comportement inattendu.
+
+  Mécanique : à la complétion, amuled déplace le fichier vers son **IncomingDir** ; le statut ne
+  passe complet qu'**après** le déplacement (pas de race). Le crawler détecte la complétion par la
+  **présence du fichier dans les partagés EC** (signal positif, auto-partagé par amuled à la
+  complétion) et promeut au **vrai nom on-disk** rapporté par amuled — la collision de nom
+  (`nom(0).ext`) est gérée par construction. Les **contraintes de déploiement** qui en découlent
+  (IncomingDir = quarantaine, FS Linux, pas de catégories, amuled dédié) sont décrites dans la
+  [référence amuled-completion-behavior](reference/2026-06-17-amuled-completion-behavior.md#contraintes-de-déploiement-résumé)
+  (source unique) et signalées dans le [runbook de déploiement](runbook-deployment.md) (mode download).
 - **WebUI — montage WAL `:ro` inter-conteneurs** : point empirique ouvert, à valider au premier
   déploiement réel (voir section « WebUI » plus haut et
   [`docs/reference/2026-06-22-webui-wal-readonly.md`](reference/2026-06-22-webui-wal-readonly.md)).
