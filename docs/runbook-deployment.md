@@ -90,6 +90,15 @@ Mapping stack → fichier de point d'entrée :
 
 ---
 
+> **⚠️ Mode download — 4 contraintes strictes à respecter** (sous peine d'échec silencieux de la
+> chaîne téléchargement → quarantaine → vérification) : volume partagé crawler/amuled, FS Linux,
+> pas de catégories amuled, jeu partagé restreint. **Détail et rationale complets dans la référence
+> [Complétion d'un download côté amuled](reference/2026-06-17-amuled-completion-behavior.md)
+> § Contraintes de déploiement.** Lisez-la avant de remplir `config/crawler/download.yaml`
+> (étape 3) si vous montez une stack en mode download.
+
+---
+
 ## 2. Prérequis par stack
 
 Les prérequis *contraignants* figurent déjà comme colonnes dans la matrice. Détails complets :
@@ -201,7 +210,8 @@ plutôt qu'à débugger un échec silencieux.
 
 ### Étape 3 — Config crawler
 
-Copiez le modèle correspondant à votre mode et renseignez le mot de passe EC :
+Le dossier `config/crawler/` contient des **fichiers modèles** suffixés `.example.yaml`. Copiez
+celui qui correspond à votre mode (observer ou download) sous le nom attendu (sans `.example`) :
 
 ```bash
 # Linux / macOS / WSL2 — exemple pour le mode observer :
@@ -219,21 +229,20 @@ cp config/crawler/download.example.yaml config/crawler/download.yaml
 Copy-Item config/crawler/download.example.yaml config/crawler/download.yaml
 ```
 
-Dans le fichier copié, renseignez `amules[].password` avec la valeur de `AMULE_EC_PASSWORD`.
+Dans le fichier copié, renseignez `amules[].password` avec **la même valeur** que
+`AMULE_EC_PASSWORD` du `.env` (étape 2). **Pourquoi** : ce mot de passe protège le canal interne
+EC ; sans correspondance entre le `.env` (amuled) et `config/crawler/download.yaml` (crawler),
+amuled refuse la connexion EC et le crawler ne démarre pas.
 
 > **Stack B uniquement — activer le port-sync.** Dans `config/crawler/download.yaml`, décommentez le
 > bloc `port_sync` (champs `gluetun_control_url` et `restarter_url`) pour armer la boucle High-ID
 > automatique. Sans cela, la stack B reste en Low-ID (état inoffensif).
 
-> #### Contraintes du mode download (à respecter pour que la chaîne fonctionne)
-> Quatre conditions pour que téléchargement → quarantaine → vérification fonctionne :
->
-> 1. `staging_dir` = `quarantine_dir` = l'**IncomingDir d'amuled** (le même volume `/data/quarantine`)
->    — configurez l'IncomingDir d'amuled sur ce dossier, **pas** son TempDir.
-> 2. Ce volume sur un **FS Linux** (ext4/overlay…), pas vfat/NTFS/HFS.
-> 3. **Pas de catégories** amuled (une catégorie redirigerait le fichier).
-> 4. amuled **dédié** au crawler, **jeu partagé restreint** (ne pointez pas une grosse bibliothèque
->    partagée pré-existante).
+> **Mode download — vérifiez les 4 contraintes** signalées avant la §2. Elles vivent dans
+> [`reference/2026-06-17-amuled-completion-behavior.md` § Contraintes de déploiement](reference/2026-06-17-amuled-completion-behavior.md#contraintes-de-déploiement-résumé),
+> qui explique aussi le **pourquoi** de chacune (assainissement de nom, dédup par collision,
+> détection par fichiers partagés). Ne les négligez pas : le mode download échoue **sans message
+> clair** si l'une est cassée (les fichiers restent dans l'IncomingDir d'amuled sans être promus).
 
 ### Étape 4 — Tirer les images
 
