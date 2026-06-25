@@ -103,8 +103,14 @@ class ProdChildRunner:
 
 def run_analysis(
     ed2k_hash: str, cfg: AnalysisConfig, runner: ChildRunner
-) -> tuple[str, dict[str, object], list[object]]:
-    """Spawne l'enfant pour ``ed2k_hash`` ; rend ``(verdict, real_meta, checks)`` (DA6)."""
+) -> tuple[str, dict[str, object], list[object], egress.ChildOutcome]:
+    """Spawne l'enfant ; rend ``(verdict, real_meta, checks, outcome)`` (DA6 + observability#2).
+
+    ``outcome`` est la CATÉGORIE TECHNIQUE de l'issue (``ok``/``timeout``/``nonzero_exit``/
+    ``egress_overflow``/``malformed``), exposée en métrique côté ``app.py`` — orthogonale au
+    verdict métier. Permet en incident de masse de voir la cause derrière une montée de
+    ``suspicious`` (sans cela, les opérateurs n'ont qu'un agrégat aveugle).
+    """
     argv = [sys.executable, "-m", _CHILD_MODULE, ed2k_hash]
     scratch = tempfile.mkdtemp(prefix="analysis-")
     try:
@@ -113,7 +119,9 @@ def run_analysis(
         )
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
-    return egress.parse(stdout, returncode, timed_out, cfg)
+    verdict, real_meta, checks = egress.parse(stdout, returncode, timed_out, cfg)
+    outcome = egress.classify_outcome(stdout, returncode, timed_out, cfg)
+    return verdict, real_meta, checks, outcome
 
 
 def _minimal_env(cfg: AnalysisConfig) -> dict[str, str]:

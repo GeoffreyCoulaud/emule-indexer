@@ -69,7 +69,12 @@ def _cfg(quarantine: Path, **overrides: object) -> AnalysisConfig:
 
 
 def _verify(quarantine: Path, cfg: AnalysisConfig) -> tuple[str, dict[str, object], list[object]]:
-    return verify_file(quarantine / _HASH, {}, cfg=cfg, runner=ProdChildRunner(cfg))
+    # On strippe le 4ᵉ élément (``outcome``, observability#2) — les tests d'intégration
+    # n'asserent que sur le triplet historique (verdict, real_meta, checks).
+    verdict, real_meta, checks, _outcome = verify_file(
+        quarantine / _HASH, {}, cfg=cfg, runner=ProdChildRunner(cfg)
+    )
+    return verdict, real_meta, checks
 
 
 @_NEEDS_FFMPEG

@@ -5,12 +5,21 @@ déterministe (jamais d'exception remontée — le service répond 200, §6). Un
 sort en erreur, dépasse le cap d'octets, ou rend un égress illisible/hors-schéma est un signal de
 POISON → ``suspicious``. Schéma strict : objet ``{verdict ∈ {clean,suspicious,malicious}: str,
 real_meta: obj, checks: list}``. Tout écart → ``suspicious``.
+
+``classify_outcome`` rend la CATÉGORIE technique de l'issue (observability#2) — orthogonale au
+verdict métier : ``ok`` (le child a sorti un égress valide), ``timeout`` (wall-clock écoulé),
+``nonzero_exit`` (le child a crashé / dépassé un rlimit / sorti != 0), ``egress_overflow`` (le
+stdout dépasse le cap), ``malformed`` (égress illisible / hors-schéma). En incident de masse, on
+voit ``suspicious`` monter en valeur métier ET la CAUSE technique (timeout, crash, etc.).
 """
 
 import json
+from typing import Literal
 
 from download_verifier.checks.base import STATUS_RANK
 from download_verifier.config import AnalysisConfig
+
+ChildOutcome = Literal["ok", "timeout", "nonzero_exit", "egress_overflow", "malformed"]
 
 _VALID_VERDICTS = frozenset(STATUS_RANK)
 
@@ -42,3 +51,34 @@ def parse(
     if not isinstance(real_meta, dict) or not isinstance(checks, list):
         return _poison()
     return verdict, real_meta, checks
+
+
+def classify_outcome(
+    stdout: bytes, returncode: int, timed_out: bool, cfg: AnalysisConfig
+) -> ChildOutcome:
+    """Catégorie technique de l'issue (observability#2) — orthogonale au verdict.
+
+    Mêmes filtres défensifs que ``parse`` (ordre identique : un égress sain ne tombe pas dans
+    une catégorie d'incident). ``ok`` ⇔ ``parse`` rendrait le verdict du JSON ; tout le reste
+    est une CAUSE technique d'incident distincte à exposer en métrique.
+    """
+    if timed_out:
+        return "timeout"
+    if returncode != 0:
+        return "nonzero_exit"
+    if len(stdout) > cfg.egress_cap_bytes:
+        return "egress_overflow"
+    try:
+        payload = json.loads(stdout)
+    except (json.JSONDecodeError, ValueError, RecursionError):
+        return "malformed"
+    if not isinstance(payload, dict):
+        return "malformed"
+    verdict = payload.get("verdict")
+    real_meta = payload.get("real_meta")
+    checks = payload.get("checks")
+    if not isinstance(verdict, str) or verdict not in _VALID_VERDICTS:
+        return "malformed"
+    if not isinstance(real_meta, dict) or not isinstance(checks, list):
+        return "malformed"
+    return "ok"

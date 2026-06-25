@@ -20,6 +20,7 @@ from pathlib import Path
 
 from download_verifier import spawn
 from download_verifier.config import AnalysisConfig
+from download_verifier.egress import ChildOutcome
 from download_verifier.spawn import ChildRunner, ProdChildRunner
 
 _VERDICT_ERROR = "error"
@@ -47,9 +48,14 @@ def verify_file(
     *,
     cfg: AnalysisConfig,
     runner: ChildRunner | None = None,
-) -> tuple[str, dict[str, object], list[object]]:
-    """Vérifie un fichier en quarantaine. Rend ``(verdict, real_meta, checks)`` (DA6)."""
+) -> tuple[str, dict[str, object], list[object], ChildOutcome | None]:
+    """Vérifie un fichier en quarantaine. Rend ``(verdict, real_meta, checks, outcome)`` (DA6).
+
+    ``outcome`` est ``None`` si verify_file court-circuite (fichier absent, symlink rejeté,
+    type non régulier — verdict ``error``, aucun child) ; sinon c'est la catégorie technique
+    d'issue du child (cf. ``spawn.run_analysis``), observée en métrique côté app (observability#2).
+    """
     child_runner = runner if runner is not None else ProdChildRunner(cfg)
     if not _is_regular_file_no_follow(quarantine_path):
-        return _VERDICT_ERROR, {}, []
+        return _VERDICT_ERROR, {}, [], None
     return spawn.run_analysis(quarantine_path.name, cfg, child_runner)

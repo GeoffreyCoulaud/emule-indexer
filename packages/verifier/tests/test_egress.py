@@ -72,3 +72,54 @@ def test_non_object_real_meta_is_suspicious() -> None:
 def test_non_list_checks_is_suspicious() -> None:
     payload = json.dumps({"verdict": "clean", "real_meta": {}, "checks": {}}).encode()
     assert egress.parse(payload, 0, False, _CFG) == ("suspicious", {}, [])
+
+
+# --- classify_outcome (observability#2) : la cause TECHNIQUE de l'issue ----------------------
+
+
+def test_classify_outcome_ok_for_valid_egress() -> None:
+    assert egress.classify_outcome(_valid("clean"), 0, False, _CFG) == "ok"
+
+
+def test_classify_outcome_each_valid_verdict_is_ok() -> None:
+    for value in ("clean", "suspicious", "malicious"):
+        assert egress.classify_outcome(_valid(value), 0, False, _CFG) == "ok"
+
+
+def test_classify_outcome_timeout() -> None:
+    # timed_out wins over tout le reste (premier filtre).
+    assert egress.classify_outcome(_valid(), 0, True, _CFG) == "timeout"
+
+
+def test_classify_outcome_nonzero_exit() -> None:
+    assert egress.classify_outcome(_valid(), 1, False, _CFG) == "nonzero_exit"
+
+
+def test_classify_outcome_egress_overflow() -> None:
+    huge = json.dumps({"verdict": "clean", "real_meta": {"p": "x" * 4096}, "checks": []}).encode()
+    assert egress.classify_outcome(huge, 0, False, _CFG) == "egress_overflow"
+
+
+def test_classify_outcome_malformed_non_json() -> None:
+    assert egress.classify_outcome(b"{not json", 0, False, _CFG) == "malformed"
+
+
+def test_classify_outcome_malformed_non_object() -> None:
+    assert egress.classify_outcome(b"[1,2,3]", 0, False, _CFG) == "malformed"
+
+
+def test_classify_outcome_malformed_bad_verdict_value() -> None:
+    payload = json.dumps({"verdict": "error", "real_meta": {}, "checks": []}).encode()
+    assert egress.classify_outcome(payload, 0, False, _CFG) == "malformed"
+
+
+def test_classify_outcome_malformed_non_string_verdict() -> None:
+    payload = json.dumps({"verdict": 1, "real_meta": {}, "checks": []}).encode()
+    assert egress.classify_outcome(payload, 0, False, _CFG) == "malformed"
+
+
+def test_classify_outcome_malformed_bad_meta_or_checks_type() -> None:
+    bad_meta = json.dumps({"verdict": "clean", "real_meta": [], "checks": []}).encode()
+    assert egress.classify_outcome(bad_meta, 0, False, _CFG) == "malformed"
+    bad_checks = json.dumps({"verdict": "clean", "real_meta": {}, "checks": {}}).encode()
+    assert egress.classify_outcome(bad_checks, 0, False, _CFG) == "malformed"

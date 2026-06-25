@@ -37,23 +37,39 @@ class _RecordingRunner:
 
 def test_valid_child_output_is_parsed() -> None:
     runner = _RecordingRunner(0, _VALID_EGRESS, False)
-    verdict, real_meta, checks = run_analysis(_HASH, _CFG, runner)
+    verdict, real_meta, checks, outcome = run_analysis(_HASH, _CFG, runner)
     assert verdict == "clean"
     assert real_meta == {"container": "mp4"}
     assert checks == []
+    assert outcome == "ok"
 
 
 def test_timed_out_child_is_suspicious() -> None:
-    assert run_analysis(_HASH, _CFG, _RecordingRunner(0, b"", True)) == ("suspicious", {}, [])
+    assert run_analysis(_HASH, _CFG, _RecordingRunner(0, b"", True)) == (
+        "suspicious",
+        {},
+        [],
+        "timeout",
+    )
 
 
 def test_nonzero_exit_child_is_suspicious() -> None:
-    assert run_analysis(_HASH, _CFG, _RecordingRunner(1, b"", False)) == ("suspicious", {}, [])
+    assert run_analysis(_HASH, _CFG, _RecordingRunner(1, b"", False)) == (
+        "suspicious",
+        {},
+        [],
+        "nonzero_exit",
+    )
 
 
 def test_oversized_child_output_is_suspicious() -> None:
     huge = b'{"verdict":"clean","real_meta":{},"checks":[]}' + b" " * (_CFG.egress_cap_bytes + 1)
-    assert run_analysis(_HASH, _CFG, _RecordingRunner(0, huge, False)) == ("suspicious", {}, [])
+    assert run_analysis(_HASH, _CFG, _RecordingRunner(0, huge, False)) == (
+        "suspicious",
+        {},
+        [],
+        "egress_overflow",
+    )
 
 
 def test_argv_targets_the_child_module_with_hash() -> None:

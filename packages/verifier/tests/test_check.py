@@ -28,10 +28,11 @@ def _cfg(tmp_path: Path) -> AnalysisConfig:
 
 def test_missing_file_is_error_without_spawn(tmp_path: Path) -> None:
     runner = _StubChildRunner(0, _CLEAN_EGRESS, False)
-    verdict, real_meta, checks = verify_file(
+    verdict, real_meta, checks, outcome = verify_file(
         tmp_path / "absent", {}, cfg=_cfg(tmp_path), runner=runner
     )
-    assert (verdict, real_meta, checks) == ("error", {}, [])
+    # outcome=None : aucun child n'a tourné → aucune issue technique à classer (observability#2).
+    assert (verdict, real_meta, checks, outcome) == ("error", {}, [], None)
     assert runner.seen_hash is None  # l'enfant n'est PAS spawné pour un fichier absent
 
 
@@ -47,10 +48,11 @@ def test_existing_file_runs_pipeline_and_returns_verdict(tmp_path: Path) -> None
     target = tmp_path / _HASH
     target.write_bytes(b"x")  # le parent ne lit JAMAIS ces octets (l'enfant si — stubé ici)
     runner = _StubChildRunner(0, _CLEAN_EGRESS, False)
-    verdict, real_meta, checks = verify_file(target, {}, cfg=_cfg(tmp_path), runner=runner)
+    verdict, real_meta, checks, outcome = verify_file(target, {}, cfg=_cfg(tmp_path), runner=runner)
     assert verdict == "clean"
     assert real_meta == {"container": "mp4"}
     assert checks == []
+    assert outcome == "ok"
     assert runner.seen_hash == _HASH  # l'enfant a été spawné avec le bon hash
 
 
@@ -78,6 +80,6 @@ def test_symlink_at_quarantine_path_is_error_without_spawn(tmp_path: Path) -> No
     link = tmp_path / _HASH
     link.symlink_to(target)
     runner = _StubChildRunner(0, _CLEAN_EGRESS, False)
-    verdict, real_meta, checks = verify_file(link, {}, cfg=_cfg(tmp_path), runner=runner)
-    assert (verdict, real_meta, checks) == ("error", {}, [])
+    verdict, real_meta, checks, outcome = verify_file(link, {}, cfg=_cfg(tmp_path), runner=runner)
+    assert (verdict, real_meta, checks, outcome) == ("error", {}, [], None)
     assert runner.seen_hash is None

@@ -40,7 +40,8 @@ _CANONICAL_HASH_RE = re.compile(r"[0-9a-f]{32}\Z")
 _MAX_BODY_BYTES = 65536
 
 
-def _bad_request(detail: str) -> JSONResponse:
+def _bad_request(metrics: VerifierMetrics, detail: str) -> JSONResponse:
+    metrics.observe_response(400)
     return JSONResponse({"error": detail}, status_code=400)
 
 
@@ -48,36 +49,55 @@ async def verify_endpoint(request: Request) -> JSONResponse:
     """``POST /verify`` : valide (strict + borné), analyse (enfant confiné, DA6), rend le résultat.
 
     Le NO-OP n'existe plus : l'analyse spawne un enfant confiné (``check.verify_file`` → DA6).
+
+    Instrumentation (observability#2/#3) : ``responses{status}`` est incrémenté pour CHAQUE
+    sortie (200/400/500) — ``observe`` historique ne voyait que les 200. ``child_outcome``
+    capture la CAUSE technique de l'issue du child (timeout, exit ≠ 0, overflow, JSON cassé,
+    OK) — orthogonale au verdict métier.
     """
-    raw = await request.body()
-    if len(raw) > _MAX_BODY_BYTES:
-        return _bad_request("corps trop volumineux")
-    try:
-        payload = json.loads(raw)
-    except (json.JSONDecodeError, ValueError, RecursionError):
-        # RecursionError : corps sous le cap d'octets mais trop profondément imbriqué
-        # (RecursionError est un RuntimeError, pas un ValueError) → 400 propre, jamais 500.
-        return _bad_request("JSON invalide")
-    if not isinstance(payload, dict):
-        return _bad_request("objet JSON attendu")
-    ed2k_hash = payload.get("hash")
-    if not isinstance(ed2k_hash, str) or _CANONICAL_HASH_RE.fullmatch(ed2k_hash) is None:
-        return _bad_request("hash canonique requis (32 hex minuscules)")
-    expected = payload.get("expected", {})
-    if not isinstance(expected, dict):
-        return _bad_request("expected doit être un objet")
     metrics: VerifierMetrics = request.app.state.metrics
-    config: AnalysisConfig = request.app.state.config
-    start = time.monotonic()
-    # verify_file est SYNCHRONE et bloquant (spawn d'un enfant + communicate jusqu'au timeout) :
-    # l'exécuter dans un thread libère l'event loop, qui continue de servir /health et /metrics
-    # pendant l'analyse (sinon le conteneur flappe en unhealthy — sandbox-confinement#0).
-    verdict, real_meta, checks = await run_in_threadpool(
-        verify_file, _quarantine_dir(request) / ed2k_hash, expected, cfg=config
-    )
-    metrics.observe(verdict, time.monotonic() - start)
-    _logger.info("verify hash=%s → verdict=%s", ed2k_hash, verdict)
-    return JSONResponse({"verdict": verdict, "real_meta": real_meta, "checks": checks})
+    try:
+        raw = await request.body()
+        if len(raw) > _MAX_BODY_BYTES:
+            return _bad_request(metrics, "corps trop volumineux")
+        try:
+            payload = json.loads(raw)
+        except (json.JSONDecodeError, ValueError, RecursionError):
+            # RecursionError : corps sous le cap d'octets mais trop profondément imbriqué
+            # (RecursionError est un RuntimeError, pas un ValueError) → 400 propre, jamais 500.
+            return _bad_request(metrics, "JSON invalide")
+        if not isinstance(payload, dict):
+            return _bad_request(metrics, "objet JSON attendu")
+        ed2k_hash = payload.get("hash")
+        if not isinstance(ed2k_hash, str) or _CANONICAL_HASH_RE.fullmatch(ed2k_hash) is None:
+            return _bad_request(metrics, "hash canonique requis (32 hex minuscules)")
+        expected = payload.get("expected", {})
+        if not isinstance(expected, dict):
+            return _bad_request(metrics, "expected doit être un objet")
+        config: AnalysisConfig = request.app.state.config
+        start = time.monotonic()
+        # verify_file est SYNCHRONE et bloquant (spawn d'un enfant + communicate jusqu'au timeout) :
+        # l'exécuter dans un thread libère l'event loop, qui continue de servir /health et
+        # /metrics pendant l'analyse (sinon le conteneur flappe en unhealthy —
+        # sandbox-confinement#0).
+        verdict, real_meta, checks, outcome = await run_in_threadpool(
+            verify_file, _quarantine_dir(request) / ed2k_hash, expected, cfg=config
+        )
+        metrics.observe(verdict, time.monotonic() - start)
+        if outcome is not None:
+            # ``outcome`` ne vit que si un child a tourné : verify_file court-circuite
+            # (fichier absent, symlink, type non régulier → ``error``) rend None et on n'a
+            # PAS d'issue technique à classer.
+            metrics.observe_child_outcome(outcome)
+        _logger.info("verify hash=%s → verdict=%s outcome=%s", ed2k_hash, verdict, outcome)
+        metrics.observe_response(200)
+        return JSONResponse({"verdict": verdict, "real_meta": real_meta, "checks": checks})
+    except Exception:
+        # Filet 500 (observability#3) : tout chemin imprévu (mkdtemp sur FS plein, etc.) est
+        # compté avant que Starlette ne génère sa réponse 500 par défaut. On relève pour que
+        # le middleware ASGI standard fasse son travail.
+        metrics.observe_response(500)
+        raise
 
 
 async def health_endpoint(request: Request) -> JSONResponse:

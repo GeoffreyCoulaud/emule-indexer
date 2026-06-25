@@ -176,9 +176,9 @@ async def test_verify_runs_off_the_event_loop_thread(
 
     def _capture_thread(
         path: Path, expected: Mapping[str, object], *, cfg: object
-    ) -> tuple[str, dict[str, object], list[object]]:
+    ) -> tuple[str, dict[str, object], list[object], str | None]:
         captured["thread"] = threading.get_ident()
-        return "clean", {}, []
+        return "clean", {}, [], "ok"
 
     monkeypatch.setattr(app_module, "verify_file", _capture_thread)
     (quarantine / ("a" * 32)).write_bytes(b"x")
@@ -201,9 +201,9 @@ async def test_verify_injects_boot_resolved_config(
 
     def _capture(
         path: Path, expected: Mapping[str, object], *, cfg: object
-    ) -> tuple[str, dict[str, object], list[object]]:
+    ) -> tuple[str, dict[str, object], list[object], str | None]:
         captured["cfg"] = cfg
-        return "clean", {}, []
+        return "clean", {}, [], "ok"
 
     monkeypatch.setattr(app_module, "verify_file", _capture)
     config = AnalysisConfig.from_env(
@@ -224,10 +224,102 @@ async def test_verify_increments_request_counter(
 ) -> None:
     import download_verifier.app as app_module
 
-    monkeypatch.setattr(app_module, "verify_file", lambda path, expected, *, cfg: ("clean", {}, ()))
+    monkeypatch.setattr(
+        app_module, "verify_file", lambda path, expected, *, cfg: ("clean", {}, (), "ok")
+    )
     (tmp_path / ("a" * 32)).write_bytes(b"x")
     async with _client(tmp_path) as client:
         verify = await client.post("/verify", json={"hash": "a" * 32, "expected": {}})
         metrics = await client.get("/metrics")
     assert verify.status_code == 200
     assert 'emule_verifier_requests_total{verdict="clean"} 1.0' in metrics.text
+
+
+@pytest.mark.asyncio
+async def test_verify_increments_child_outcome_counter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # observability#2 : un verify qui aboutit avec un outcome ``timeout`` doit incrémenter
+    # ``emule_verifier_child_outcome{outcome="timeout"}``. Le verdict métier reste agrégé
+    # dans ``emule_verifier_requests`` (orthogonalité).
+    import download_verifier.app as app_module
+
+    monkeypatch.setattr(
+        app_module,
+        "verify_file",
+        lambda path, expected, *, cfg: ("suspicious", {}, (), "timeout"),
+    )
+    (tmp_path / ("a" * 32)).write_bytes(b"x")
+    async with _client(tmp_path) as client:
+        verify = await client.post("/verify", json={"hash": "a" * 32, "expected": {}})
+        metrics = await client.get("/metrics")
+    assert verify.status_code == 200
+    assert 'emule_verifier_child_outcome_total{outcome="timeout"} 1.0' in metrics.text
+
+
+@pytest.mark.asyncio
+async def test_verify_skips_child_outcome_when_no_child_ran(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # observability#2 (cas frontière) : verify_file court-circuite (fichier absent / symlink /
+    # type non régulier → verdict ``error``, outcome=None). Aucun child n'a tourné → on ne doit
+    # PAS toucher ``child_outcome`` (sinon le métric serait pollué avec une cat fictive).
+    import download_verifier.app as app_module
+
+    monkeypatch.setattr(
+        app_module, "verify_file", lambda path, expected, *, cfg: ("error", {}, [], None)
+    )
+    async with _client(tmp_path) as client:
+        await client.post("/verify", json={"hash": "a" * 32, "expected": {}})
+        metrics = await client.get("/metrics")
+    # le compteur n'a aucune série child_outcome (jamais touché)
+    assert "emule_verifier_child_outcome_total{" not in metrics.text
+
+
+@pytest.mark.asyncio
+async def test_verify_counts_200_responses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # observability#3 : chaque sortie /verify est comptée par ``responses{status}``. Ici 200.
+    import download_verifier.app as app_module
+
+    monkeypatch.setattr(
+        app_module, "verify_file", lambda path, expected, *, cfg: ("clean", {}, (), "ok")
+    )
+    (tmp_path / ("a" * 32)).write_bytes(b"x")
+    async with _client(tmp_path) as client:
+        await client.post("/verify", json={"hash": "a" * 32, "expected": {}})
+        metrics = await client.get("/metrics")
+    assert 'emule_verifier_responses_total{status="200"} 1.0' in metrics.text
+
+
+@pytest.mark.asyncio
+async def test_verify_counts_400_responses(quarantine: Path) -> None:
+    # observability#3 : un 400 (JSON invalide) doit aussi incrémenter ``responses{status="400"}``.
+    # Avant, seul ``observe`` était appelé (uniquement sur 200) → les 400 étaient invisibles.
+    async with _client(quarantine) as client:
+        await client.post("/verify", content=b"{not json")
+        metrics = await client.get("/metrics")
+    assert 'emule_verifier_responses_total{status="400"} 1.0' in metrics.text
+
+
+@pytest.mark.asyncio
+async def test_verify_counts_500_responses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # observability#3 : un crash imprévu de ``verify_file`` (mkdtemp sur FS plein, etc.) sort en
+    # 500 et DOIT être compté. Le filet est un try/except Exception qui ré-élève après comptage,
+    # laissant le ServerErrorMiddleware standard de Starlette rendre la 500.
+    import download_verifier.app as app_module
+
+    def _boom(path: Path, expected: Mapping[str, object], *, cfg: object) -> None:
+        raise RuntimeError("disque plein")
+
+    monkeypatch.setattr(app_module, "verify_file", _boom)
+    (tmp_path / ("a" * 32)).write_bytes(b"x")
+    # ``raise_app_exceptions=False`` : on veut que httpx convertisse l'exception en une réponse
+    # HTTP 500 (comme un vrai serveur ASGI), pas qu'il la ré-élève côté test.
+    config = AnalysisConfig.from_env({"QUARANTINE_DIR": str(tmp_path)})
+    app = build_app(config)
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post("/verify", json={"hash": "a" * 32, "expected": {}})
+        metrics = await client.get("/metrics")
+    assert response.status_code == 500
+    assert 'emule_verifier_responses_total{status="500"} 1.0' in metrics.text
