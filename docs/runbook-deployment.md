@@ -270,18 +270,63 @@ docker compose -f examples/sans-vpn-lowid.yaml --profile observer up -d
 
 # Stack A, mode download + monitoring :
 docker compose -f examples/gluetun.yaml --profile download --profile monitoring up -d
+```
 
-# Stack D, mode download, avec gVisor (Linux + runsc) :
+```bash
+# Stack D, mode download, avec gVisor — ⚠️ Linux uniquement (runsc enregistré sur l'hôte) :
 CONTAINER_RUNTIME=runsc docker compose -f examples/sans-vpn-highid.yaml --profile download up -d
 ```
 
-> En mode download, le crawler **vérifie que le verifier répond** au démarrage et **refuse de
-> démarrer** s'il est injoignable. Son `restart: unless-stopped` le relance jusqu'à ce que le
-> verifier soit sain — c'est le comportement normal, pas une erreur.
+> ⚠️ **`CONTAINER_RUNTIME=runsc` ne fonctionne que sur Linux** avec gVisor installé. Sur macOS ou
+> Windows (Docker Desktop), la commande échoue avec « unknown runtime: runsc ». Si vous n'avez pas
+> gVisor, retirez simplement le préfixe `CONTAINER_RUNTIME=runsc` — la stack tourne en `runc`
+> (runtime conteneur Docker standard) sans changer de comportement fonctionnel.
 
-> En mode download, l'**analyse antivirus (clamav)** est active par défaut. Au premier démarrage, sa
-> base de signatures se synchronise (quelques minutes) ; les fichiers ressortent `suspicious` en
-> attendant — c'est **transitoire**. Détails dans le [runbook d'administration](runbook-administration.md).
+#### Premier boot : ce qui est normal (et ce qui ne l'est pas)
+
+Au tout premier démarrage en mode download, **deux comportements inattendus** sont en réalité
+nominaux. Ne les traitez pas comme des pannes :
+
+1. **Le crawler redémarre en boucle pendant 1-2 minutes.** En mode download, il vérifie au
+   démarrage que le service de vérification (verifier) répond, et **refuse de démarrer** sinon. Son
+   `restart: unless-stopped` le relance jusqu'à ce que le verifier soit sain. C'est attendu :
+   regardez les logs du verifier (`docker compose logs verifier`), il démarre en quelques dizaines
+   de secondes, puis le crawler s'accroche.
+2. **Les fichiers ressortent `suspicious` pendant 5 à 20 minutes.** L'analyse antivirus (clamav)
+   est active par défaut. Au premier démarrage, clamav télécharge sa **base de signatures**
+   (~300-500 Mo, durée dépendante de votre connexion : 5 min en fibre, 20+ min en 4G/ADSL). Tant
+   que la base n'est pas chargée, clamav refuse de dire « sain » par défaut défensif → tous les
+   fichiers atterrissent en `suspicious`. C'est **transitoire** : une fois `freshclam: […]
+   updated ok` visible dans les logs (`docker compose logs verifier | grep freshclam`), les
+   prochains fichiers seront verdictés normalement. Détails dans le
+   [runbook d'administration](runbook-administration.md).
+
+**Signes que le premier boot s'est bien passé :**
+
+```bash
+docker compose -f examples/<fichier> ps         # tous les services en "Up" (pas "Restarting")
+docker compose logs amuled | head -50           # voit "Connecting to" puis "Connected to" un serveur
+docker compose logs crawler | grep -iE "cycle|search"   # le crawler annonce au moins un cycle
+```
+
+Comptez **3 à 5 minutes** avant la première trace d'activité catalogage. Le crawler peut sembler
+silencieux au début — c'est normal.
+
+#### En cas d'erreur au déploiement
+
+Si une étape échoue, regardez les logs **avant** de relancer :
+
+| Symptôme | Cause probable | Quoi vérifier |
+|---|---|---|
+| `docker compose pull` échoue | Image absente / réseau / mauvaise version | Vérifiez votre connexion Internet + que `IMAGE_TAG` (dans `.env`) existe sur GHCR. |
+| `docker compose up -d` retourne immédiatement avec un service `Exited (1)` | Erreur de config (mauvais `.env`, mauvais `config/crawler/*.yaml`) | `docker compose logs <service-en-erreur>` (souvent : variable manquante, mot de passe `change-me` oublié, chemin invalide). |
+| Le verifier ne démarre jamais | RAM insuffisante avec clamav, ou base clamav non téléchargée | Vérifiez la RAM dispo (`docker stats`) ; si < 2 Go, désactivez clamav (voir runbook administration). |
+| Le crawler boucle sur "verifier unreachable" pendant > 5 minutes | Le verifier est down OU `verifier_url` mal configuré dans `config/crawler/download.yaml` | `docker compose logs verifier` (doit montrer un `Listening on :8000`) + comparer avec `verifier_url` côté crawler. |
+| Port déjà utilisé (`bind: address already in use`) | Un autre service (autre crawler, autre Grafana) utilise le port | Modifiez `LISTEN_PORT` ou `GRAFANA_PORT` dans `.env`. |
+
+Pour les pannes **après** déploiement (amuled sans serveurs, fichier sain en `suspicious` une fois
+la base clamav prête, port-sync inopérant, etc.), voir le
+[runbook de dépannage](runbook-troubleshooting.md).
 
 ### Étape 6 — Vérifier
 
@@ -311,9 +356,12 @@ de la matrice car elles seraient cochées pour toutes :
 ## Premier démarrage : amorçage automatique du réseau
 
 Au **tout premier run**, amuled récupère **automatiquement** sa liste de serveurs eD2k (`server.met`)
-et de nœuds Kad (`nodes.dat`) pour se connecter — patientez quelques instants après le démarrage,
-vous n'avez rien à faire. *(Si amuled ne se connecte à aucun réseau, voir le
+et de nœuds Kad (`nodes.dat`) pour se connecter — comptez **1 à 3 minutes** après le démarrage,
+vous n'avez rien à faire. *(Si après 5 minutes amuled ne se connecte à aucun réseau, voir le
 [runbook de dépannage](runbook-troubleshooting.md).)*
+
+En mode download, voir aussi la sous-section [« Premier boot : ce qui est normal »](#premier-boot--ce-qui-est-normal-et-ce-qui-ne-lest-pas)
+de l'étape 5 pour les deux comportements transitoires (crawler qui redémarre, clamav qui synchronise).
 
 ---
 
