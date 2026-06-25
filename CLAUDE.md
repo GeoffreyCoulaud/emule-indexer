@@ -46,17 +46,19 @@ The crawler is Clean/Hexagonal: `domain/` pure, `application/` async use-cases, 
 - **Two run modes:** *observer* (no `verifier_url`) is crawl-only; *download* (`verifier_url` set) wires the download + verification loops live, fail-fast on a verifier health check.
 - **Standalone tools** (`merge`, `compact`) never touch prod code or mutate a DB in place — they read a source and write a NEW file.
 - **Boundary discipline (E-D13):** absorb failures from external I/O (apprise notifiers, the verifier RPC → degrade), but let in-process 100%-tested code crash loudly (a `PrometheusSink` failure is a bug, not a transient).
-- **Confinement posture (decided 2026-06-17):** the portable floor is container hardening (`cap_drop: ALL` / `no-new-privileges` / `read_only` / `internal`) + per-child seccomp **blocklist** + rlimits. **gVisor via `CONTAINER_RUNTIME=runsc` IS the kernel ring**; per-child kernel namespaces and a seccomp allowlist are deliberate non-goals. See `docs/superpowers/specs/2026-06-15-ring-noyau-design.md`.
+- **Confinement posture (decided 2026-06-17):** the portable floor is container hardening (`cap_drop: ALL` / `no-new-privileges` / `read_only` / `internal`) + per-child seccomp **blocklist** + rlimits. **gVisor via `CONTAINER_RUNTIME=runsc` IS the kernel ring**; per-child kernel namespaces and a seccomp allowlist are deliberate non-goals. **Why** : per-child kernel namespaces (`net=none`, bwrap, mount namespaces) require either `CAP_SYS_ADMIN` (which would regress the `cap_drop: ALL` baseline) or unprivileged user namespaces (host-sysctl-dependent, conflicts with Docker's default seccomp, fragile under gVisor) — gVisor delivers an equivalent isolation without that cost. Seccomp allowlist (vs. the current blocklist) was rejected because it's too brittle on healthy media (false-positive risk on legitimate libc calls during `ffprobe` / `clamscan`). Same reasoning summarized for operators in `docs/runbook-administration.md` § Limites connues. See `docs/superpowers/specs/2026-06-15-ring-noyau-design.md` for the full record.
+- **amuled is third-party and intentionally NOT hardened with our `cap_drop: ALL` / `user:` / `read_only` baseline** (decided 2026-06-17, same posture decision). Documented in `docs/runbook-troubleshooting.md` § Droits cross-user and `docs/runbook-administration.md` § Limites connues. Residual risk accepted for v0.x: if amuled is compromised, the attacker reaches the `quarantine` volume. Do not "fix" this without revisiting the decision record.
 
 ## Commands
 
 ```bash
 uv sync --dev                          # install (scripts/setup-dev.sh also installs the pre-push hook)
 
-# The full gate — all seven must be green before any commit (pre-push hook + CI run the same):
+# The full gate — all eight must be green before any commit (pre-push hook + CI run the same):
 ( cd packages/matching && uv run pytest -q )          # matching tests, 100% BRANCH coverage
 ( cd packages/crawler  && uv run pytest -q )          # crawler tests, 100% BRANCH coverage
 ( cd packages/verifier && uv run pytest -q )          # verifier tests, 100% BRANCH coverage
+( cd packages/webui    && uv run pytest -q )          # webui tests, 100% BRANCH coverage
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy
@@ -64,7 +66,7 @@ uv run sqlfluff lint packages/crawler/src                    # embedded SQLite m
 uv run python -m catalog_webui._dev.check_templates packages/webui/src/catalog_webui/adapters/templates  # garde templates sans logique
 ```
 
-**The gate is PER PACKAGE** (`cd packages/<pkg> && uv run pytest`). A bare `uv run pytest` from the repo root is **not** the gate: the root has no `[tool.pytest.ini_options]` (so no coverage, no integration-marker deselection), and a root `conftest.py` (`collect_ignore_glob = ["packages/*"]`) makes it collect nothing (exit 5). Tooling split: `[tool.ruff]` / `[tool.mypy]` at root span all four packages; `[tool.pytest]` / `[tool.coverage]` / `[tool.sqlfluff]` are per-package; one root `uv.lock`; `config/` stays at root.
+**The gate is PER PACKAGE** (`cd packages/<pkg> && uv run pytest`). The intent: each package owns its own pytest config and 100 % branch coverage in isolation — a root run would mix coverage data across packages and break the per-package threshold. A bare `uv run pytest` from the repo root is also blocked mechanically (the root has no `[tool.pytest.ini_options]` and a root `conftest.py` sets `collect_ignore_glob = ["packages/*"]` → exit 5 with zero collected). Tooling split: `[tool.ruff]` / `[tool.mypy]` at root span all four packages; `[tool.pytest]` / `[tool.coverage]` / `[tool.sqlfluff]` are per-package; one root `uv.lock`; `config/` stays at root.
 
 **Single test** (the package-wide `--cov-fail-under=100` makes a lone test "fail" — disable coverage):
 
@@ -114,12 +116,14 @@ Invariants: RE2 → linear-time matching (filenames are hostile input); the deci
 ## Gotchas
 
 **Matching engine / RE2:**
-- `google-re2` imports as **`re2`** (no type stubs → mypy override in place). Invalid pattern raises **`re2.error`**. **RE2 has no lookaround and no backreferences** — for a digit boundary use a *consuming* guard `(?:^|[^0-9])` / `(?:[^0-9]|$)`, not `\b`.
+- `google-re2` imports as **`re2`** (no type stubs → mypy override in place). Invalid pattern raises **`re2.error`**.
+- **RE2 has no lookaround and no backreferences** — *lookaround* = zero-width assertions like `(?=…)` / `(?<…)` that match without consuming characters; *backreference* = `\1` referring to a captured group. For a digit boundary, use a *consuming* guard `(?:^|[^0-9])` / `(?:[^0-9]|$)` (= "start-of-string OR a non-digit char, consumed"), not `\b` (which behaves differently in RE2 than in PCRE).
 - `re2.compile()` / `re2.escape()` return `Any` — `... is not None` recovers a `bool`; wrap `re2.escape(...)` in `str(...)` to satisfy `--strict`.
-- Coverage idioms: a Protocol stub `def m(...) -> bool: ...` must be **one line**; a `case _: assert_never(x)` arm needs `# pragma: no cover`.
-- Don't validate config order-dependently (parse pass = structural; graph pass = full table). Recursive validators need an explicit depth guard → a clean `DepthExceededError`, not `RecursionError`.
+- Coverage idioms: a `Protocol` stub `def m(...) -> bool: ...` must be **one line** (a body with `...` on a second line counts as an uncovered branch under `branch=true`). A `case _: assert_never(x)` arm — i.e. the "unreachable default" of a `match` over a closed tagged-union — needs `# pragma: no cover` because it is unreachable by design but the branch counter doesn't know that.
+- Don't validate config order-dependently (parse pass = structural; graph pass = full table). Recursive validators need an explicit depth guard → a clean `DepthExceededError`, not `RecursionError` (which is a Python runtime artifact, not a domain error).
 
-**EC / amuled (empirical — see `docs/reference/`):**
-- EC exposes **no media metadata on search results** (`2026-06-11-ec-field-richness.md`).
-- The download-queue **partfile hash is in the `EC_TAG_PARTFILE_HASH` (0x031E) child tag**, not the parent's own value (a UINT8 index) (`2026-06-13-ec-download-opcodes.md`).
-- amuled moves a finished file to its IncomingDir and flips status to complete **after** the move (no race); completion is detected via the **shared-files list** (`2026-06-17-amuled-completion-behavior.md`).
+**EC / amuled (empirical — facts established by hardware probes / source reading, see `docs/reference/`):**
+- *EC = External Connection, the TCP protocol through which the crawler commands the aMule daemon (`amuled`). Defined by aMule, opcodes documented in `docs/reference/ec-protocol.md`.*
+- EC exposes **no media metadata on search results** — search-result tags carry only filename, size, hash, source count; no duration, codec, bitrate. The verifier (post-download) is the only place that knows the media is e.g. a 24-min H.264 file. Detail: `2026-06-11-ec-field-richness.md`.
+- The download-queue **partfile hash is in the `EC_TAG_PARTFILE_HASH` (0x031E) child tag**, not the parent's own value (which is a UINT8 index, not the file hash). A naive decoder that takes the parent value gets the queue position instead of the MD4 hash. Detail: `2026-06-13-ec-download-opcodes.md`.
+- amuled moves a finished file to its IncomingDir and flips status to complete **after** the move (no race) — meaning by the time `PS_COMPLETE`(9) is observable, the file is already at its final on-disk path. Completion is detected via the **shared-files list** (a positive signal: amuled auto-shares completed files, so the file appearing in `EC_OP_GET_SHARED_FILES` = it exists at its final path). Detail: `2026-06-17-amuled-completion-behavior.md`.
