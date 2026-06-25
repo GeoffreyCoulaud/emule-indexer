@@ -117,12 +117,41 @@ durcissement `user: 999`/`read_only` est porté par compose).
 
 ### Étape 1 — Prérequis
 
-Selon la stack choisie (§2) :
+Selon la stack choisie (§2), les prérequis ci-dessous doivent être réunis **avant** d'éditer le
+`.env` (étape 2).
 
-- Docker + compose v2 (toutes).
-- `/dev/net/tun` disponible sur l'hôte (A, B).
-- Port redirigé sur la box + pare-feu ouvert (D).
-- Runtime `runsc` enregistré sur l'hôte, si gVisor (Linux uniquement — voir § Options orthogonales).
+**Toutes stacks :**
+- Docker + compose v2 (vérifier : `docker compose version`).
+- Une machine qui correspond aux [prérequis matériels minima](#prérequis-matériels-minima) ci-dessus.
+
+**Stacks A et B (avec VPN) :**
+- Un **abonnement VPN WireGuard** chez un fournisseur supporté par gluetun → vous aurez besoin de la
+  **clé privée WireGuard** que votre fournisseur expose dans son espace client (étape 2).
+- Le périphérique virtuel **`/dev/net/tun`** disponible sur l'hôte (c'est un fichier spécial Linux
+  utilisé par les VPN ; présent par défaut sur la plupart des distributions et fourni aussi par
+  Docker Desktop ; vérifier : `ls -la /dev/net/tun`).
+- **Stack B uniquement** : fournisseur VPN avec **port forwarding** activable (déjà cadré §1) + le
+  groupe Unix `docker` doit exister sur l'hôte (vérifier : `getent group docker` retourne une ligne).
+
+**Stack D (sans VPN, High-ID statique) :**
+- Un **port redirigé sur votre box** (TCP + UDP, par défaut 4662) vers cette machine et autorisé au
+  pare-feu de l'hôte (Windows compris). « Redirigé » = règle de NAT/port forwarding dans l'interface
+  d'admin de votre box ; demandez à votre fournisseur d'accès si vous ne l'avez jamais fait.
+
+**Optionnel — gVisor (sandbox de noyau) :**
+- Le runtime conteneur `runsc` enregistré sur l'hôte (**Linux uniquement** — gVisor n'existe pas sur
+  Docker Desktop). Voir § Options orthogonales.
+
+**Vérification rapide avant de continuer :**
+
+```bash
+docker compose version                       # toutes stacks : doit afficher v2.x
+ls -la /dev/net/tun                          # stacks A/B : doit exister
+getent group docker                          # stack B : doit retourner une ligne
+docker info | grep -i runtime                # gVisor optionnel : `runsc` doit apparaître
+```
+
+Si une commande échoue, traitez-la avant de passer à l'étape 2.
 
 ### Étape 2 — Secrets
 
