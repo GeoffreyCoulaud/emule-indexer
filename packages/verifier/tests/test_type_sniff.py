@@ -65,6 +65,16 @@ def test_unknown_bytes_are_clean_via_pure_error() -> None:
     assert outcome.meta["sniffed_type"] is None
 
 
+def test_empty_header_is_clean_without_crashing() -> None:
+    # Régression input-trust#0 : puremagic.from_string(b"") lève PureValueError, qui
+    # n'hérite PAS de PureError → l'except le rate → crash du child. On court-circuite
+    # un header vide (un fichier de 0 octet en quarantaine) → clean (ffprobe verra une
+    # absence de média et tranchera).
+    outcome = sniff(b"")
+    assert outcome.status == "clean"
+    assert outcome.meta["sniffed_type"] is None
+
+
 def test_meta_carries_sniffed_type_when_known() -> None:
     outcome = sniff(b"\x1a\x45\xdf\xa3" + b"\x00" * 64)
     assert isinstance(outcome.meta["sniffed_type"], str)

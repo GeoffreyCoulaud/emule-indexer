@@ -95,6 +95,12 @@ _MEDIA_MARKERS: tuple[str, ...] = (
 
 def sniff(header: bytes) -> CheckOutcome:
     """Sniffe ``header`` et classe son danger absolu (spec §5/DA7)."""
+    if not header:
+        # Court-circuit input-trust#0 : ``puremagic.from_string(b"")`` lève ``PureValueError``,
+        # qui n'hérite PAS de ``PureError`` → l'except ne l'attraperait pas et un fichier de
+        # 0 octet ferait crasher le child. Aucune information à extraire d'un header vide ;
+        # ffprobe verra l'absence de média et tranchera.
+        return CheckOutcome(name="type_sniff", status="clean", meta={"sniffed_type": None})
     if header.startswith(_EXECUTABLE_MAGICS):
         return CheckOutcome(name="type_sniff", status="malicious", meta={"sniffed_type": None})
     if header.startswith(_ARCHIVE_MAGICS):
