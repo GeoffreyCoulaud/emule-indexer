@@ -191,6 +191,69 @@ Plusieurs causes, à vérifier dans cet ordre :
 
 ---
 
+## Comprendre les verdicts du verifier
+
+Quand vous regardez un fichier dans la WebUI ou la base, vous voyez un **verdict** parmi 4 valeurs.
+Voici ce que chacun signifie concrètement :
+
+| Verdict | Signification | Que faire ? |
+|---|---|---|
+| `clean` | Tous les checks activés ont passé (`type_sniff` reconnaît le format, `ffprobe` lit les pistes média, `clamav` ne trouve aucune signature de virus). | Le fichier est probablement sain. Vous pouvez le récupérer depuis la quarantaine. **Ce n'est pas une garantie d'absence de virus** — c'est l'absence de signature connue dans la base clamav. |
+| `suspicious` | Au moins un check a échoué ou n'a pas pu se prononcer (ex. base clamav non encore prête, scan tué par manque de mémoire, ffprobe incapable de lire). | Lire la colonne `explanation` du verdict : elle dit lequel des checks a échoué et pourquoi. Causes fréquentes : base clamav pas encore synchronisée (transitoire), manque de mémoire (cf. runbook administration), ou fichier réellement étrange. |
+| `malicious` | Clamav a trouvé une signature de virus connue. | **N'extrayez pas le fichier de la quarantaine.** Si vous pensez à un faux positif, vérifiez la signature dans la base clamav et remontez à clamav (pas à ce projet). |
+| `unknown` | Le verifier n'a pas pu être interrogé du tout (verifier down, timeout, erreur réseau). | Voir « Le crawler redémarre en boucle » plus haut. |
+
+> Un fichier `clean` n'est pas certifié inoffensif — c'est l'absence de signature dans une base
+> donnée. Pour les fichiers à enjeu (binaires exécutables, archives), faites une vérification
+> supplémentaire avant d'ouvrir.
+
+---
+
+## Récupération après panne
+
+Quelques scénarios « j'ai cassé quelque chose, comment je remonte ? » :
+
+### J'ai perdu / je ne me souviens plus de `AMULE_EC_PASSWORD`
+
+- **Symptôme.** Le crawler refuse de se connecter à amuled (`EC auth failed` dans les logs).
+- **Solution.** Choisissez un nouveau mot de passe, mettez à jour `AMULE_EC_PASSWORD` dans `.env`
+  ET `amules[].password` dans `config/crawler/download.yaml` (ou `observer.yaml`), puis redémarrez :
+  ```bash
+  docker compose -f examples/<fichier> --profile <mode> up -d --force-recreate amuled crawler
+  ```
+  Pas de perte de catalogue (le mot de passe ne protège que le canal EC, pas les données).
+
+### J'ai mal édité `.env` et le compose refuse de démarrer
+
+- **Symptôme.** `docker compose up` retourne une erreur de parsing ou un service `Exited (1)`
+  immédiatement.
+- **Solution.** Recommencez à partir du modèle : `cp .env.example .env.new`, recopiez vos secrets
+  un par un en vérifiant la syntaxe (pas d'espaces autour du `=`, pas de guillemets autour des
+  valeurs sauf nécessaire), puis `mv .env.new .env`. Évite d'avoir à débugger un fichier corrompu.
+
+### Un fichier est bloqué dans la quarantaine
+
+- **Symptôme.** Le fichier est listé dans la WebUI avec un verdict `suspicious` mais vous savez
+  qu'il est sain (et vous voulez le récupérer).
+- **Solution.** La quarantaine est un volume Docker (`<projet>_quarantine`). Pour y accéder :
+  ```bash
+  docker volume ls | grep quarantine                       # nom exact
+  docker run --rm -it -v <nom-du-volume>:/q alpine ls /q   # lister
+  docker run --rm -v <nom-du-volume>:/q -v "$PWD":/out alpine cp /q/<fichier> /out/
+  ```
+  Le fichier est copié dans votre dossier courant. Vérifiez-le indépendamment avant de l'ouvrir.
+
+### Je veux repartir de zéro (catalogue effacé)
+
+- **Solution destructive (irréversible).** Arrêtez tout et supprimez les volumes :
+  ```bash
+  docker compose -f examples/<fichier> --profile <mode> down -v
+  ```
+  Le `-v` est ce qui efface. Sans lui, les volumes (donc le catalogue) sont préservés.
+  Sauvegardez d'abord ce que vous tenez à garder.
+
+---
+
 ## Outils de diagnostic
 
 ### Lancer une commande ponctuelle dans une image
@@ -209,4 +272,5 @@ uv run python -m emule_indexer validate-config
 ```
 
 Charge + valide les 4 configs et sort en erreur (code ≠ 0) si l'une est invalide, **sans rien
-démarrer**. À lancer avant un déploiement ou après une modification de config.
+démarrer**. À lancer **avant** un déploiement (entre étape 3 et étape 4 du [runbook de déploiement](runbook-deployment.md))
+ou après une modification de config.
