@@ -175,6 +175,12 @@ inattendue lors d'un run réel s'ajoute ici en annexe.
 
 ### Ce que le probe N'a PAS encore mesuré (PENDING homelab)
 
+> **Statut (2026-06-25)** : ces mesures restent **DEFERRED** — elles exigeraient un déploiement
+> réel sur le réseau eD2k avec des recherches qui retournent des hits non-vides, ce qui n'a pas
+> encore été fait. Si cette section est encore présente sans verdict dans une version future du
+> doc, c'est qu'elle est toujours pendante (les conclusions n'auraient pas suffisamment changé
+> pour justifier une mise à jour du code basée dessus).
+
 - Présence/absence réelle de `EC_TAG_KNOWNFILE_RATING` sur des résultats non vides.
 - Valeur effective de `EC_TAG_PARTFILE_STATUS` sur un résultat neuf depuis le réseau.
 - Tout tag `raw_meta` éventuel non répertorié dans `CEC_SearchFile_Tag` (non attendu

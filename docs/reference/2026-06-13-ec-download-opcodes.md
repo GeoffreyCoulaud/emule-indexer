@@ -131,6 +131,13 @@ s'est produit.
 
 ## PENDING homelab
 
+> **Statut (2026-06-25)** : ces mesures restent **DEFERRED** — elles exigent un déploiement
+> homelab réel avec sources eD2k actives et un transfert qui aboutit, ce qui n'a pas encore été
+> orchestré. Conséquence : la mécanique de complétion EC repose sur la lecture des sources amont
+> d'aMule (cf. `2026-06-17-amuled-completion-behavior.md`), pas sur une observation directe via EC.
+> Si un déploiement réel a lieu, mettre à jour cette section avec le verdict
+> (COMPLETED / ABANDONED / nouvelles trouvailles).
+
 Non atteignable depuis un conteneur éphémère (pas de sources eD2k, LowID + réseau contraint) :
 
 - **Complétion réelle** : `size_done == size_full` sur un partfile, donc
