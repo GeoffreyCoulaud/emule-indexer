@@ -19,6 +19,25 @@ from typing import Protocol
 from download_verifier.checks.base import CheckOutcome
 from download_verifier.config import AnalysisConfig
 
+# Bornes explicites passées à ``clamscan`` (sandbox-confinement#3) — défense-en-profondeur.
+# Les vecteurs sont DÉJÀ bornés par les rlimits + mem_limit + wall-clock du parent, mais on
+# aligne la posture du moteur clamav lui-même (zip-bombs en récursion, fichiers extraits qui
+# dépassent les rlimits avant qu'elles ne mordent, etc.). Les bornes sont calibrées pour ne
+# PAS gêner l'usage normal (médias d'épisodes ~500 Mio max) :
+#
+#  - ``--max-scansize=2048M`` / ``--max-filesize=2048M`` : 4× la taille usuelle (default 100M / 25M
+#    en clamav est trop serré pour un fichier média) ;
+#  - ``--max-recursion=10`` : un média légitime n'a aucune archive imbriquée ;
+#  - ``--max-files=1000`` : idem (un média non-archive ne génère pas 1000 unités) ;
+#  - ``--max-scantime=120000`` (ms = 120 s) : cohérent avec ``RLIMIT_CPU_S`` du parent.
+_CLAMSCAN_LIMITS: tuple[str, ...] = (
+    "--max-scansize=2048M",
+    "--max-filesize=2048M",
+    "--max-recursion=10",
+    "--max-files=1000",
+    "--max-scantime=120000",
+)
+
 
 class ClamavRunner(Protocol):
     """Exécute clamscan et rend ``(returncode, stdout)``. Injecté pour les tests."""
@@ -50,6 +69,7 @@ def scan(path: Path, runner: ClamavRunner, cfg: AnalysisConfig) -> CheckOutcome:
         cfg.clamscan_path,
         "--no-summary",
         "--stdout",
+        *_CLAMSCAN_LIMITS,
         "--database",
         cfg.clamav_db_dir,
         str(path),

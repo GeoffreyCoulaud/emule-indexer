@@ -23,7 +23,7 @@ services:
     user: "999:999"
     read_only: true
     tmpfs:
-      - /tmp
+      - /tmp:size=64m  # sandbox-confinement#3
     cap_drop:
       - ALL
     security_opt:
@@ -82,7 +82,7 @@ services:
     user: "999:999"
     read_only: true
     tmpfs:
-      - /tmp
+      - /tmp:size=256m  # sandbox-confinement#3 — scratch mkdtemp de l'analyse child
     cap_drop:
       - ALL
     security_opt:

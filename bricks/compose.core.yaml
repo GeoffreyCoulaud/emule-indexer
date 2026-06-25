@@ -9,7 +9,9 @@ x-crawler-common: &crawler-common
   user: "999:999"
   read_only: true
   tmpfs:
-    - /tmp
+    # ``size=`` borne le tmpfs (sandbox-confinement#3) → un service compromis ne peut pas
+    # remplir la RAM du host via /tmp (le compte mémoire compte hors mem_limit cgroup).
+    - /tmp:size=64m
   cap_drop:
     - ALL
   security_opt:
@@ -99,7 +101,10 @@ services:
     user: "999:999"
     read_only: true
     tmpfs:
-      - /tmp
+      # /tmp héberge le ``mkdtemp`` scratch de l'analyse (cwd du child). ``size=`` borne
+      # explicitement (sandbox-confinement#3) — un descendant compromis ne peut pas
+      # remplir la RAM du host via le tmpfs (le compte mémoire est hors ``mem_limit``).
+      - /tmp:size=256m
     cap_drop:
       - ALL
     security_opt:
@@ -180,7 +185,8 @@ services:
     user: "999:999"
     read_only: true
     tmpfs:
-      - /tmp
+      # ``size=`` borne le tmpfs (sandbox-confinement#3) — webui read-only, usage /tmp marginal.
+      - /tmp:size=32m
     cap_drop:
       - ALL
     security_opt:

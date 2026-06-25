@@ -64,12 +64,20 @@ def test_suspicious_when_rc_other() -> None:
 
 
 def test_argv_uses_frozen_flags_and_db_and_path() -> None:
+    # Bornes explicites passées à clamscan (sandbox-confinement#3) : défense-en-profondeur
+    # contre zip-bomb / récursion / scan trop long. Calibrées pour ne PAS gêner un média
+    # de plusieurs centaines de Mio (cf. constantes _CLAMSCAN_LIMITS du module).
     runner = _StubRunner(0, b"")
     scan(Path("/quarantine/abc"), runner, _CFG)
     assert runner.calls[0] == [
         "clamscan",
         "--no-summary",
         "--stdout",
+        "--max-scansize=2048M",
+        "--max-filesize=2048M",
+        "--max-recursion=10",
+        "--max-files=1000",
+        "--max-scantime=120000",
         "--database",
         "/clamav-db",
         "/quarantine/abc",
