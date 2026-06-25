@@ -68,27 +68,50 @@ trafic P2P.
 
 ### Route A (recommandée) — derrière le VPN, via port forwarding
 
-gluetun sait demander un **port forwarding** à votre fournisseur VPN : le port joignable est celui du
-VPN, **tout le trafic reste derrière le tunnel**. gluetun ne l'implémente que pour **4 fournisseurs** :
-**ProtonVPN, PIA, PrivateVPN, PerfectPrivacy**. Une **boucle port-sync** lit ce port forwardé et
-l'applique à amuled automatiquement, puis redémarre amuled pour qu'il écoute dessus.
+> ⚠️ **Prérequis Route A** : Docker rootful natif sur Linux + familiarité avec les groupes Unix
+> (`docker`, GID, `getent`). Si vous n'êtes pas à l'aise avec ces concepts, prenez la **Route B**
+> (port-forward manuel sur votre box) — vous y perdez seulement la mise à jour automatique du port
+> si votre VPN rotate, ce qui n'arrive que rarement.
 
-Elle est **opt-in** et exige **trois réglages solidaires** :
+**Comment ça marche.** gluetun sait demander un **port forwarding** à votre fournisseur VPN : le
+port joignable est celui du VPN, **tout le trafic reste derrière le tunnel**. Cette boucle
+« port-sync » fonctionne en trois maillons solidaires :
 
-1. un fournisseur à port forwarding (ci-dessus) + `VPN_PORT_FORWARDING: "on"` dans `.env` ;
-2. le service **`docker-proxy`** (profil download, stack B / `examples/gluetun.yaml`), qui redémarre
-   amuled de façon confinée (le crawler ne voit jamais le socket Docker) : renseignez `DOCKER_GID`
-   dans `.env` (GID du groupe `docker` de l'hôte, via `getent group docker`). **Exige un Docker
-   rootful natif** ; **Docker Desktop et le mode rootless ne fonctionnent pas** tels quels (voir le
-   [runbook de dépannage](runbook-troubleshooting.md) si le port-sync reste inopérant) ;
-3. dans `config/crawler/download.yaml` : décommentez le bloc `port_sync` (champs
+```
+[gluetun]  ──── obtient le port forwardé du VPN ────►  [docker-proxy]  ──── pousse le redémarrage d'amuled ────►  [amuled]
+                                                            ▲                                                          ▲
+                                                  lit le socket Docker                                        écoute sur le nouveau port
+                                              (groupe Unix `docker` requis)
+```
+
+Si **un seul** maillon est mal configuré, le port-sync est désarmé silencieusement et le nœud reste
+en Low-ID — pas d'erreur visible. C'est pourquoi le crawler **refuse de démarrer** (fail-fast)
+quand certains réglages combinés sont incohérents.
+
+**Configuration — trois réglages solidaires :**
+
+1. **VPN avec port forwarding** + `VPN_PORT_FORWARDING: "on"` dans `.env` (cherchez les fournisseurs
+   marqués `PORT_FORWARDING: yes` dans la [liste gluetun](https://github.com/qdm12/gluetun-wiki/tree/main/setup/providers)).
+2. Le service **`docker-proxy`** (profil download, stack B / `examples/gluetun.yaml`), qui redémarre
+   amuled de façon confinée (le crawler ne voit jamais le socket Docker directement). Renseignez
+   `DOCKER_GID` dans `.env` (GID du groupe `docker` de l'hôte) :
+
+   ```bash
+   # Linux (toutes distributions courantes) :
+   getent group docker | cut -d: -f3
+   ```
+
+   > **⚠️ Linux uniquement.** `getent` et le groupe `docker` n'existent pas tels quels sur macOS ni
+   > sur Windows. **Docker Desktop et le mode rootless ne fonctionnent pas** pour Route A (voir le
+   > [runbook de dépannage](runbook-troubleshooting.md) si vous voulez comprendre pourquoi). Si vous
+   > êtes sur Docker Desktop : utilisez la Route B.
+3. Dans `config/crawler/download.yaml` : décommentez le bloc `port_sync` (champs
    `gluetun_control_url: "http://gluetun:8000"` et `restarter_url: "http://docker-proxy:2375"`) ; la
    section `port_sync` de `config/crawler/crawler.yaml` contient les valeurs par défaut (réglage fin
    optionnel).
 
-Les **trois** doivent être présents : si un seul manque, le crawler **refuse de démarrer**
-(fail-fast). Absents → la boucle reste OFF et Low-ID est l'état normal. Une fois actif, surveillez
-les events `port-sync` / `High-ID retrouvé` dans les logs et les métriques `emule_port_*`.
+Une fois actif, surveillez les events `port-sync` / `High-ID retrouvé` dans les logs et les
+métriques `emule_port_*`.
 
 ### Route B — ouvrir un port vous-même
 
