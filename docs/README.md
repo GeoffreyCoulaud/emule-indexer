@@ -20,6 +20,48 @@ d'être à l'aise avec un **terminal** et **Docker** (orientation Linux/serveur)
   gVisor, outils de catalogue (fusion/compaction/validation), limites connues.
 - **[Runbook de dépannage](runbook-troubleshooting.md)** — *résoudre un problème* concret, quel que
   soit votre niveau : symptôme → cause → solution.
+- **[Légalité, confidentialité, éthique](legal-and-privacy.md)** — ce que votre nœud catalogue et
+  stocke (et ce qu'il ne stocke pas), le risque légal honnêtement, ce qu'un VPN protège vraiment.
+  À lire avant de déployer un nœud public.
+
+## Collaboration entre chercheurs
+
+`emule-indexer` est conçu pour qu'**un chercheur déploie son propre nœud** ; il n'y a **pas de hub
+central** et c'est volontaire (non-objectif pour la v0.x). La collaboration se fait **hors-ligne**,
+en partageant des bases SQLite (`catalog.db`) entre chercheurs qui ont chacun leur propre nœud.
+
+**Architecture :**
+- Chaque chercheur héberge **une instance complète** (un crawler + un amuled + optionnellement
+  verifier/webui). Chaque instance gère sa propre base `catalog.db`.
+- Les instances **ne se connaissent pas** entre elles ; elles ne se synchronisent pas.
+- Pour partager ses découvertes : envoyer son `catalog.db` (via un drive partagé, un git LFS,
+  un Nextcloud, peu importe le moyen) à un autre chercheur, qui le **fusionne** dans son catalogue
+  avec l'outil `merge`.
+
+**Outil de fusion :** chaque chercheur peut fusionner N catalogues collectés vers un seul, avec
+[l'outil `emule_indexer.merge` documenté dans le runbook d'administration § Outils de catalogue](runbook-administration.md#outils-de-catalogue).
+La fusion est **idempotente** (re-merger le même fichier est un no-op) et **safe-by-default**
+(pas d'écrasement sans `--force`). Chaque fichier est identifié par son **empreinte de contenu
+eD2k** — la fusion ne crée jamais de doublons.
+
+**Cycle de partage typique :**
+
+1. Vous catalogez localement pendant N semaines.
+2. Vous exportez votre `catalog.db` (copie depuis le volume Docker, voir runbook-administration
+   § Planification disque).
+3. Vous l'échangez avec d'autres chercheurs via un canal hors-ligne.
+4. Vous re-fusionnez les catalogues reçus dans le vôtre : `python -m emule_indexer.merge --output
+   catalog-merged.db votre-catalog.db catalog-reçu-de-X.db catalog-reçu-de-Y.db`.
+5. Vous remplacez votre `catalog.db` actif par `catalog-merged.db` (arrêter le crawler, swap,
+   redémarrer).
+
+**Ce qui n'existe pas (à ce stade) :**
+- Pas de protocole de découverte des autres chercheurs.
+- Pas de notification automatique « un autre nœud a trouvé un fichier que vous cherchez ».
+- Pas de synchronisation en temps réel ni de hub central.
+
+Ces fonctionnalités peuvent émerger un jour si la communauté grossit ; pour l'instant, le partage
+manuel suffit largement.
 
 ## Développeur / contributeur / CI
 

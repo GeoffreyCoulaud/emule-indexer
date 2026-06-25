@@ -267,7 +267,8 @@ Tous ces outils sont **opérateurs et ponctuels** (pas de boucle, jamais déclen
 - **Fusion de catalogues** : `uv run python -m emule_indexer.merge --output catalog-merged.db
   source-a.db source-b.db …` consolide N `catalog.db` (un par chercheur/campagne) en un seul,
   **idempotent** (re-merger est un no-op) et safe-by-default (pas d'écrasement sans `--force` ;
-  `--into <source>` pour fusionner dans une source existante).
+  `--into <source>` pour fusionner dans une source existante). **Cycle de partage entre chercheurs
+  documenté dans [docs/README § Collaboration entre chercheurs](README.md#collaboration-entre-chercheurs).**
 - **Compaction du catalogue** : `uv run python -m emule_indexer.compact catalog.db -o
   catalog-compact.db [--keep-recent-days 90]` réduit la **seule** table qui croît sans borne,
   `file_observations` (une ligne par fichier observé à chaque cycle). Le brut des `--keep-recent-days`
