@@ -119,6 +119,11 @@ Trois causes possibles, de la plus probable à la moins :
 
 ## High-ID / port-sync
 
+> ⚠️ **Prérequis pour ce diagnostic** : connaissance Docker (sockets, groupes Unix). Si vous n'êtes
+> pas à l'aise avec ces concepts, le port-sync n'est probablement pas la bonne voie pour vous —
+> envisagez la **Route B** (port-forward manuel sur votre box) ou restez en **Low-ID** (qui marche
+> très bien). Voir [runbook d'administration § High-ID](runbook-administration.md#high-id-optionnel--devenir-joignable).
+
 ### Le port-sync reste inopérant (toujours Low-ID alors qu'il est activé)
 
 Plusieurs causes, à vérifier dans cet ordre :
