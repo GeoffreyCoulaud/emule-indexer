@@ -1,9 +1,15 @@
 # Runbook de dépannage — emule-indexer
 
-Symptômes courants et leur résolution, **quel que soit votre niveau**. Chaque entrée suit le même
-format : **symptôme → cause → solution**. Pour *monter* un nœud, voir le
-[runbook de déploiement](runbook-deployment.md) ; pour le *régler*, le
-[runbook d'administration](runbook-administration.md).
+Symptômes courants et leur résolution. Chaque entrée suit le même format : **symptôme → cause →
+solution**. Pour *monter* un nœud, voir le [runbook de déploiement](runbook-deployment.md) ; pour
+le *régler*, le [runbook d'administration](runbook-administration.md).
+
+> **À qui ça s'adresse.** La plupart des entrées ci-dessous restent accessibles sans expertise
+> particulière (lecture de logs, redémarrage de service). **Certaines sections — High-ID/port-sync
+> et Stockage & droits — exigent une familiarité Linux/Docker** et sont signalées comme telles à
+> leur ouverture. Si vous bloquez sur une étape qui dépasse votre confort, l'option de repli sûre
+> est presque toujours de *repartir d'un volume propre* (voir « Récupération après panne » plus bas)
+> — vous perdez le catalogue accumulé mais vous redémarrez d'un état connu.
 
 ---
 
