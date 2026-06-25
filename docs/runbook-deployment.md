@@ -158,21 +158,46 @@ Si une commande échoue, traitez-la avant de passer à l'étape 2.
 Copiez le modèle et renseignez vos secrets :
 
 ```bash
-# Linux / macOS / WSL2 :
+# === Linux / macOS / WSL2 (bash/zsh) ===
 cp .env.example .env
-# PowerShell :
+```
+
+```powershell
+# === Windows (PowerShell) ===
 Copy-Item .env.example .env
 ```
 
-Renseignez dans `.env` selon votre stack :
+#### Remplir le `.env`
 
-- `AMULE_EC_PASSWORD` — **toujours** ; un mot de passe que vous choisissez (protège le canal EC).
-- `WIREGUARD_PRIVATE_KEY` — stack A ou B (clé privée WireGuard de votre fournisseur).
-- `SERVER_COUNTRIES` — stack A ou B (pays de sortie VPN, ex. `Switzerland`).
-- `LISTEN_PORT` — stack D (port d'écoute publié, défaut `4662`).
-- `GRAFANA_PWD` — si vous activez le monitoring.
+Le `.env.example` contient des placeholders `change-me` — **ce ne sont pas des valeurs par défaut
+sûres**, ce sont des marqueurs « à remplir ». Une valeur `change-me` laissée telle quelle ne
+provoque pas d'erreur au lancement mais causera un **échec silencieux plus tard** (le crawler ne
+pourra pas s'authentifier au démon amuled, et vous le verrez seulement dans les logs).
 
-Le `.env` est **gitignoré** : il ne sera jamais committé.
+Variables à renseigner, par stack :
+
+| Variable | Stacks | Quoi | Où la trouver |
+|---|---|---|---|
+| `AMULE_EC_PASSWORD` | Toutes | Mot de passe que **vous choisissez** (texte libre, ≥ 12 caractères recommandés). Il protège le canal interne entre le crawler et amuled. | Vous l'inventez. Notez-le, vous le re-saisirez à l'étape 3. |
+| `WIREGUARD_PRIVATE_KEY` | A, B | Clé privée WireGuard (chaîne base64 ≈ 44 caractères). | Espace client de votre fournisseur VPN, section WireGuard / Configuration. Chaque fournisseur a sa propre UI — voir la [wiki gluetun](https://github.com/qdm12/gluetun-wiki/tree/main/setup/providers) pour les liens par fournisseur. |
+| `SERVER_COUNTRIES` | A, B | Pays de sortie VPN, **nom complet en anglais** (`Switzerland`, `France`, `Germany`). Pas le code ISO. | Liste des pays supportés par votre fournisseur. |
+| `VPN_SERVICE_PROVIDER` | A, B | Nom du fournisseur tel qu'attendu par gluetun (`protonvpn`, `pia`, `privatevpn`, `perfectprivacy`, ...). | [Liste gluetun](https://github.com/qdm12/gluetun-wiki/tree/main/setup/providers). |
+| `VPN_PORT_FORWARDING` | B | `on` (active la boucle port-sync) ou `off` (Low-ID). | Vous décidez. `off` = Low-ID, suffisant pour cataloguer. |
+| `DOCKER_GID` | B | GID numérique du groupe Unix `docker` sur **l'hôte**, utilisé par le service `docker-proxy` pour accéder au socket Docker. | `getent group docker \| cut -d: -f3` |
+| `LISTEN_PORT` / `LISTEN_PORT_UDP` | D | Port que vous avez redirigé sur votre box (défaut `4662` TCP + `4672` UDP). | Identique à la redirection NAT de votre box (étape 1). |
+| `GRAFANA_PWD` | Toutes, si `--profile monitoring` | Mot de passe que **vous choisissez** pour le compte `admin` de Grafana. | Vous l'inventez. |
+
+Le `.env` est **gitignoré** — il ne sera jamais committé. Gardez-en une copie hors du repo en cas de
+perte (la `WIREGUARD_PRIVATE_KEY` notamment, qui est re-générable mais nécessite de revoir votre VPN).
+
+#### Checklist avant de lancer
+
+- [ ] Toutes les variables requises par votre stack sont renseignées (cf. tableau).
+- [ ] Aucune valeur ne vaut encore `change-me`.
+- [ ] Les commandes de vérification de l'étape 1 passent toutes.
+
+Si l'une de ces lignes n'est pas cochée, ne lancez pas — vous gagnerez du temps à corriger maintenant
+plutôt qu'à débugger un échec silencieux.
 
 ### Étape 3 — Config crawler
 
