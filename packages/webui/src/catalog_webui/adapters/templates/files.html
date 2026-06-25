@@ -33,4 +33,12 @@
     {% endfor %}
   </tbody>
 </table>
+
+{% for url in (nav.prev_url,) if url %}
+<a href="{{ url }}">← Précédente</a>
+{% endfor %}
+<span>Page {{ nav.page }}</span>
+{% for url in (nav.next_url,) if url %}
+<a href="{{ url }}">Suivante →</a>
+{% endfor %}
 {% endblock %}

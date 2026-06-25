@@ -26,7 +26,8 @@ from catalog_webui.domain.views import (
 # Constantes
 # ---------------------------------------------------------------------------
 
-_PAGE_SIZE = 50
+PAGE_SIZE = 50
+_PAGE_SIZE = PAGE_SIZE  # alias historique (interne) — la valeur publique sert au handler
 
 # Dernière décision par fichier via fenêtre ROW_NUMBER.
 _SQL_COVERAGE = """\

@@ -102,6 +102,14 @@ Condition = AllDef | AnyDef | NotDef
 # Ensemble fermé des paliers (cf. spec §8.3 EBNF : tier).
 TIERS: frozenset[str] = frozenset({"catalog", "notify", "download"})
 
+# Rang du palier (spec §8.5 : « palier le plus haut, download>notify>catalog »). Entier croissant
+# = palier PLUS FORT. Source de vérité partagée par ``engine.MatchingEngine`` (sélection de la
+# meilleure décision) ET ``catalog_webui.domain.coverage`` (affichage : tier le plus fort →
+# meilleure couverture). Sans cette mutualisation, le webui réinventait son propre rang avec une
+# convention divergente — un 4ᵉ palier ou un renommage aurait silencieusement faussé l'affichage.
+# Invariant testé : ``set(TIER_RANK) == TIERS``.
+TIER_RANK: dict[str, int] = {"catalog": 0, "notify": 1, "download": 2}
+
 
 @dataclass(frozen=True)
 class Rule:

@@ -169,6 +169,18 @@ class FileRowDisplay:
     ed2k_link: str
 
 
+@dataclass(frozen=True)
+class PageNav:
+    """Navigation paginée d'une liste — précalculée côté handler (spec W-D8 : aucune logique
+    dans le template). ``prev_url``/``next_url`` à ``None`` quand l'extrémité est atteinte ;
+    le template itère ``(url,) if url`` pour rendre le lien quand il existe.
+    """
+
+    page: int
+    prev_url: str | None
+    next_url: str | None
+
+
 # ---------------------------------------------------------------------------
 # Détail fichier — vue d'affichage (précalculée)
 # ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ d'un adapter d'un plan ultérieur.
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from catalog_matching.config import MatcherConfig
+from catalog_matching.config import TIER_RANK, MatcherConfig
 from catalog_matching.matchers import CoverageMatcher
 from catalog_matching.models import FileCandidate, TargetSegment
 from catalog_matching.resolver import MatcherResolver, ResolvedTarget
@@ -93,10 +93,10 @@ class DownloadCandidate:
     target_id: str
 
 
-# Rang des paliers (cf. spec §8.5 : « palier le plus haut, download>notify>catalog »).
-# Entier croissant = palier plus haut. `TIERS` (config) donne l'ensemble LICITE ; ce
-# rang donne l'ORDRE de décision. Un test vérifie set(_TIER_RANK) == TIERS.
-_TIER_RANK: dict[str, int] = {"catalog": 0, "notify": 1, "download": 2}
+# Re-export du rang des paliers (source de vérité ``catalog_matching.config.TIER_RANK``,
+# partagée avec ``catalog_webui.domain.coverage``). Le nom interne reste ``_TIER_RANK`` pour ne
+# pas casser les imports historiques côté tests internes.
+_TIER_RANK = TIER_RANK
 
 
 def _first_matching_rule(

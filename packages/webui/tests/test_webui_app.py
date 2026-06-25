@@ -575,6 +575,108 @@ def app_with_hostile_filename(
 
 
 @pytest.mark.asyncio
+async def test_empty_filter_param_does_not_silently_zero_results(
+    populated_app: tuple[Starlette, str],
+) -> None:
+    # Régression webui-security#0 (filtres) : ``?target=`` (vide, fréquent avec un <select>
+    # à option vide) doit être traité comme « pas de filtre », pas comme ``target = ''`` qui
+    # matche 0 résultat sans message.
+    app, hash_ = populated_app
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/files?target=&tier=&verdict=&q=")
+    assert resp.status_code == 200
+    assert hash_[:8] in resp.text  # le fichier inséré est rendu malgré les filtres vides
+
+
+@pytest.mark.asyncio
+async def test_page_zero_is_clamped_to_first_page(
+    populated_app: tuple[Starlette, str],
+) -> None:
+    # Régression webui-security#2 : ``?page=0`` → OFFSET=-50 (SQLite renvoyait la page 1 par
+    # chance). Désormais ``max(1, page)`` clamp.
+    app, hash_ = populated_app
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/files?page=0")
+    assert resp.status_code == 200
+    assert hash_[:8] in resp.text
+    assert "Page 1" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_security_headers_are_set_on_every_response(
+    populated_app: tuple[Starlette, str],
+) -> None:
+    # webui-security#3 : CSP + X-Content-Type-Options + Referrer-Policy posés par middleware.
+    app, _ = populated_app
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/files")
+    assert resp.headers["Content-Security-Policy"] == "default-src 'self'"
+    assert resp.headers["X-Content-Type-Options"] == "nosniff"
+    assert resp.headers["Referrer-Policy"] == "no-referrer"
+
+
+@pytest.mark.asyncio
+async def test_files_page_shows_pagination_navigation(
+    catalog_db: Path, local_db: Path, tmp_path: Path
+) -> None:
+    # webui-security#1 : la page liste 50 fichiers max ; quand elle est PLEINE, un lien
+    # « Suivante → » doit être rendu (heuristique : on n'a pas le compte total).
+    with sqlite3.connect(catalog_db) as conn:
+        for i in range(50):
+            ed2k = f"{i:032d}"
+            conn.execute("INSERT INTO files VALUES (?, ?, ?)", (ed2k, 100, None))
+            conn.execute(
+                "INSERT INTO file_observations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    i + 1,
+                    ed2k,
+                    f"file-{i}.bin",
+                    100,
+                    1,
+                    1,
+                    None,
+                    None,
+                    None,
+                    None,
+                    "{}",
+                    "kw",
+                    "2024-01-01T00:00:00",
+                    "node1",
+                ),
+            )
+        conn.commit()
+    with sqlite3.connect(local_db) as conn:
+        conn.execute("INSERT INTO node_runtime VALUES (?, ?)", ("node_id", "node-paged"))
+        conn.execute(
+            "INSERT INTO node_runtime VALUES (?, ?)", ("created_at", "2024-01-01T00:00:00")
+        )
+        conn.commit()
+    targets_path = _write_targets_yaml(tmp_path)
+    matcher_path = _write_matcher_yaml(tmp_path)
+    import catalog_webui
+
+    templates_dir = Path(catalog_webui.__file__).parent / "adapters" / "templates"
+    static_dir = Path(catalog_webui.__file__).parent / "adapters" / "static"
+    app = build_app(
+        catalog_db=catalog_db,
+        local_db=local_db,
+        targets=targets_path,
+        matcher=matcher_path,
+        templates_dir=templates_dir,
+        static_dir=static_dir,
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp1 = await client.get("/files")
+        resp2 = await client.get("/files?page=2")
+    # page 1 : page pleine → « Suivante » présent, « Précédente » absent.
+    assert "Suivante" in resp1.text
+    assert "Précédente" not in resp1.text
+    # page 2 : page non pleine (0 fichier) → « Précédente » présent, « Suivante » absent.
+    assert "Précédente" in resp2.text
+    assert "Suivante" not in resp2.text
+
+
+@pytest.mark.asyncio
 async def test_hostile_filename_is_escaped_in_ed2k_link(
     app_with_hostile_filename: tuple[Starlette, str],
 ) -> None:
