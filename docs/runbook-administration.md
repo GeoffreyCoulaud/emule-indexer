@@ -137,8 +137,14 @@ au risque**.
 ## Analyse antivirus (clamav) — provisioning & réglage
 
 En **mode download**, le verifier ajoute une 3ᵉ source de verdict : un scan **par signatures**
-(`clamscan`) qui rend un fichier `malicious` sur match d'une base virale. C'est **activé par défaut
-dans le profil download** (`ENABLED_CHECKS: type_sniff,ffprobe,clamav` dans `bricks/compose.core.yaml`).
+(`clamscan`) qui produit un verdict `malicious` quand un fichier correspond à une signature de
+virus connue. C'est **activé par défaut** dans le profil download (`ENABLED_CHECKS:
+type_sniff,ffprobe,clamav` dans `bricks/compose.core.yaml`).
+
+> **Ce que clamav fait, et ce qu'il ne fait pas.** Il détecte les virus dont la signature est connue
+> dans sa base — c'est un **filet** opportuniste, pas une garantie. Un fichier `clean` selon clamav
+> n'est pas certifié inoffensif ; un fichier `malicious` est très probablement infecté. Ne lui faites
+> pas porter une promesse qu'il ne tient pas.
 
 **Comment la base arrive (sans casser l'isolement réseau du verifier).** Le verifier n'a **aucune
 sortie Internet** (réseau `internal: true`) — il ne peut donc pas mettre à jour la base lui-même. Un
@@ -146,21 +152,50 @@ sortie Internet** (réseau `internal: true`) — il ne peut donc pas mettre à j
 dans un **volume partagé `clamav-db`** ; le verifier le **lit en lecture seule**. L'isolement du
 verifier est préservé.
 
-- Au démarrage en mode download, `freshclam` fait sa **première synchronisation** (~300–500 Mo) — cela prend
-  quelques minutes. **Tant que la base n'est pas là, clamav rend `suspicious`** (défensif, jamais
-  `clean` sans base), ce qui peut mettre des fichiers en attente d'un re-scan. C'est transitoire.
-- L'image du verifier grossit de **~50–80 Mo** (le moteur `libclamav` + `clamscan` ; **pas** la base,
-  qui vit dans le volume — c'est tout l'intérêt du sidecar).
-- `clamscan` charge **toute la base en mémoire** : les rlimits du sous-processus d'analyse sont
-  **relâchés** quand clamav est actif (≈1,5 Gio d'adressage, 120 s CPU — réglables via
-  `RLIMIT_AS_BYTES_CLAMAV` / `RLIMIT_CPU_S_CLAMAV`), et le `mem_limit` du conteneur verifier est
-  relevé à **2 Gio** en conséquence (sinon l'OOM-killer du cgroup tuerait le scan avant le rlimit).
-  Si un fichier **sain** ressort systématiquement `suspicious`, le scan se fait probablement tuer :
-  augmentez ces deux valeurs.
+### Premier démarrage
+
+Au premier démarrage en mode download, `freshclam` télécharge la base de signatures
+(**~300-500 Mo**). Durée typique (en 2026, à ré-évaluer si les bases grossissent) : **3-5 min en
+fibre, 10-20 min en ADSL/4G**.
+
+**Comment vérifier que la base est prête :**
+
+```bash
+docker compose -f examples/<fichier> logs freshclam | grep -iE "updated|main\.cvd"
+```
+
+Vous devez voir une ligne du type `freshclam: ClamAV update process started ... main.cvd updated`.
+
+**Pendant la synchro, tous les fichiers ressortent `suspicious`** — c'est défensif (clamav ne dit
+jamais `clean` sans base). Une fois la base prête, les **nouveaux** fichiers reçoivent un verdict
+normal ; en revanche, **les fichiers déjà passés en `suspicious` ne sont pas re-scannés
+automatiquement**. Si vous voulez les re-vérifier, il faut les re-soumettre manuellement (laisser
+amuled les re-télécharger, ou utiliser un outil dédié si vous en avez).
+
+L'image du verifier grossit de **~50-80 Mo** (moteur `libclamav` + `clamscan` ; **pas** la base, qui
+vit dans le volume — c'est tout l'intérêt du sidecar).
+
+### Mémoire et limites — calibration à valider
+
+> ⚠️ **Hypothèse non validée en prod.** Les valeurs ci-dessous (1,5 Gio d'adressage, 120 s CPU,
+> `mem_limit` 2 Gio sur le conteneur verifier) sont une **première calibration homelab**, pas
+> validée par un test contre l'image de prod. Si vous observez le symptôme décrit plus bas, c'est
+> probablement qu'elles sont sous-dimensionnées pour votre contexte.
+
+`clamscan` charge **toute la base en mémoire** : les rlimits du sous-processus d'analyse sont
+**relâchés** quand clamav est actif (≈1,5 Gio d'adressage, 120 s CPU — réglables via
+`RLIMIT_AS_BYTES_CLAMAV` / `RLIMIT_CPU_S_CLAMAV`), et le `mem_limit` du conteneur verifier est
+relevé à **2 Gio** en conséquence (sinon le cgroup tue le scan avant que le rlimit ne s'applique).
+
+**Symptôme typique d'un sous-dimensionnement** : un fichier **sain** ressort systématiquement
+`suspicious`, même longtemps après que `freshclam` ait annoncé la base prête. Cause probable : le
+scan est tué par manque de mémoire avant d'avoir pu rendre son verdict. **Procédure d'ajustement** :
+doublez les deux valeurs (`RLIMIT_AS_BYTES_CLAMAV` à 3 Gio, `mem_limit` du verifier à 4 Gio),
+redémarrez le verifier, retestez. Si le symptôme persiste, doublez encore.
 
 > **Désactiver clamav** : retirez `clamav` de `ENABLED_CHECKS` (le verifier retombe sur
 > `type_sniff,ffprobe`) et, si vous voulez, ne lancez pas le sidecar. Le **smoke test** et le profil
-> **observer** tournent déjà sans clamav.
+> **observer** tournent déjà sans clamav. C'est une option valide sur machine peu RAM (< 4 Go).
 
 ---
 
