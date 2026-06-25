@@ -61,12 +61,25 @@ format : **symptôme → cause → solution**. Pour *monter* un nœud, voir le
 - **Cause.** En mode download, le crawler **refuse de démarrer** si le verifier ne répond pas (pas de
   téléchargement sans vérification) ; son `restart: unless-stopped` le relance tant que le verifier
   n'est pas sain — c'est le comportement attendu.
-- **Solution.** Le crawler finit par démarrer dès que le verifier est sain. Pour éviter les
+- **Solution rapide.** Le crawler finit par démarrer dès que le verifier est sain. Pour éviter les
   redémarrages initiaux, démarrez le verifier d'abord, puis le reste :
   ```bash
   docker compose -f examples/<fichier> --profile download up -d verifier
   docker compose -f examples/<fichier> --profile download up -d
   ```
+- **Si la boucle persiste > 5 min**, diagnostic en escalier :
+  1. **Le verifier a-t-il démarré proprement ?** `docker compose logs verifier --tail 50` — vous
+     devez voir une ligne `Uvicorn running on http://0.0.0.0:8000` (ou similaire). Si vous voyez
+     `OOMKilled` ou `Killed`, c'est un manque de mémoire — voir « Un fichier sain ressort suspicious »
+     ci-dessous (cause #2 : manque de RAM avec clamav).
+  2. **Le verifier est-il joignable depuis le réseau du crawler ?** `docker compose exec crawler
+     wget -qO- http://verifier:8000/healthz` (si `wget` n'est pas dispo, `curl` aussi) — doit
+     renvoyer un JSON `{"status":"ok"}`. Si `Connection refused`, le verifier est down ; si `Name
+     resolution failure`, le service n'est pas sur le même réseau Docker (config compose suspecte).
+  3. **`verifier_url` est-il correct côté crawler ?** Ouvrir `config/crawler/download.yaml` et
+     vérifier que `verifier_url` pointe sur `http://verifier:8000` (nom de service compose, pas
+     `localhost` ni IP). Une mauvaise URL → le crawler ne joint jamais le verifier, peu importe son
+     état.
 
 ### Un fichier manifestement sain ressort `suspicious`
 
@@ -84,11 +97,23 @@ Trois causes possibles, de la plus probable à la moins :
 
 ### Le fichier fini n'est pas récupéré (reste dans l'IncomingDir, non catalogué)
 
-- **Cause.** Une des contraintes du mode download n'est pas respectée : IncomingDir d'amuled ≠ dossier de
-  quarantaine, volume sur un FS non-Linux, catégories amuled actives, ou bibliothèque partagée
-  pré-existante trop grosse.
-- **Solution.** Revoyez l'encadré « Contraintes du mode download » du
-  [runbook de déploiement](runbook-deployment.md) (les 4 conditions).
+- **Cause.** Une des 4 contraintes du mode download n'est pas respectée. Détail et rationale dans
+  [`reference/2026-06-17-amuled-completion-behavior.md` § Contraintes de déploiement](reference/2026-06-17-amuled-completion-behavior.md#contraintes-de-déploiement-résumé).
+- **Solution — vérifier les 4 contraintes dans l'ordre :**
+  1. **IncomingDir d'amuled = dossier quarantaine du crawler ?** Vérifier dans la config amuled
+     (`amule.conf` → `IncomingDir=`) ; doit pointer sur le même chemin monté que `staging_dir` /
+     `quarantine_dir` du crawler. Le plus souvent : `/data/quarantine` côté amuled et côté crawler
+     (même volume Docker `quarantine`).
+  2. **Le volume est-il sur un FS Linux ?** `docker inspect emule-indexer_quarantine | grep
+     Mountpoint` puis `stat -f -c %T <mountpoint>` sur l'hôte → doit être `ext2/ext3` (= ext4),
+     `btrfs`, `overlayfs`, etc. Pas `vfat`, `ntfs`, `fuseblk`. Si vous êtes sur Docker Desktop
+     macOS, le mapping vers HFS+/APFS échoue.
+  3. **Y a-t-il des catégories amuled actives ?** Dans `amule.conf` ou via EC : aucune catégorie
+     ne doit avoir un `Path=` non vide qui redirigerait le fichier ailleurs que dans IncomingDir.
+  4. **Le jeu partagé d'amuled est-il restreint ?** Il doit contenir uniquement les fichiers
+     téléchargés par le crawler (qui les remet à la quarantaine à chaque cycle), pas une grosse
+     bibliothèque pré-existante. Sinon `shared_files()` retourne trop de hits et la détection de
+     complétion devient lente / instable.
 
 ---
 
