@@ -353,14 +353,16 @@ webui.example.com {
 }
 ```
 
-> **Point empirique #1 (à valider au premier déploiement)** : le montage `:ro` des bases SQLite en
-> mode WAL vivant (le crawler écrit simultanément) peut échouer — SQLite en mode WAL crée des
-> fichiers `-shm` et `-wal` dont les accès `mmap` peuvent être refusés par le noyau quand le FS est
-> monté `mode=ro`. Si la WebUI ne démarre pas ou retourne des erreurs SQLite, retirez le `:ro` du
-> montage des volumes `catalog-db` et `local-db` dans votre fichier `examples/*.yaml` (le montage
-> devient RW, mais `open_ro` applicatif (`PRAGMA query_only=ON`) maintient la garantie lecture seule
-> côté application). Documentez le verdict dans
-> [`docs/reference/`](reference/2026-06-22-webui-wal-readonly.md) après validation homelab.
+> **Garantie lecture seule de la WebUI.** Les volumes `catalog-db` et `local-db` sont montés en
+> **lecture-écriture** dans les `examples/*.yaml`, mais la WebUI applique elle-même la garantie
+> lecture seule au niveau SQL via `PRAGMA query_only=ON` (paramétré dans le code applicatif). Toute
+> tentative d'écriture est refusée par SQLite avant même d'atteindre le disque — votre catalogue
+> est donc protégé contre une régression du code WebUI.
+>
+> *Historique : le montage Docker en `:ro` avait été essayé mais s'est révélé instable avec SQLite
+> en mode WAL (le crawler écrit `-shm` et `-wal` en simultané ; le noyau peut refuser les `mmap` sur
+> un FS monté `ro`). Le `PRAGMA` applicatif est aussi sûr et plus robuste. Voir
+> [`reference/2026-06-22-webui-wal-readonly.md`](reference/2026-06-22-webui-wal-readonly.md).*
 
 ---
 
@@ -403,7 +405,8 @@ webui.example.com {
   (IncomingDir = quarantaine, FS Linux, pas de catégories, amuled dédié) sont décrites dans la
   [référence amuled-completion-behavior](reference/2026-06-17-amuled-completion-behavior.md#contraintes-de-déploiement-résumé)
   (source unique) et signalées dans le [runbook de déploiement](runbook-deployment.md) (mode download).
-- **WebUI — montage WAL `:ro` inter-conteneurs** : point empirique ouvert, à valider au premier
-  déploiement réel (voir section « WebUI » plus haut et
-  [`docs/reference/2026-06-22-webui-wal-readonly.md`](reference/2026-06-22-webui-wal-readonly.md)).
+- **WebUI — montage WAL `:ro` inter-conteneurs** : **point empirique clos (2026-06-25)** — le
+  montage Docker `:ro` a été retiré en faveur du `PRAGMA query_only=ON` applicatif (aussi sûr,
+  plus robuste). Voir section « WebUI » plus haut et
+  [`docs/reference/2026-06-22-webui-wal-readonly.md`](reference/2026-06-22-webui-wal-readonly.md).
 - **Hub central / rétention** : non planifiés à ce stade.
