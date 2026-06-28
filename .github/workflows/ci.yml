@@ -16,37 +16,52 @@ jobs:
   pipeline:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-uv-env
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup — uv + sync
+        uses: ./.github/actions/setup-uv-env
 
       # --- lint ---
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-      - run: uv run mypy
-      - run: uv run sqlfluff lint packages/crawler/src
-      - run: uv run python -m catalog_webui._dev.check_templates packages/webui/src/catalog_webui/adapters/templates
+      - name: Lint — ruff check
+        run: uv run ruff check .
+      - name: Lint — ruff format
+        run: uv run ruff format --check .
+      - name: Lint — mypy
+        run: uv run mypy
+      - name: Lint — sqlfluff (migrations SQL)
+        run: uv run sqlfluff lint packages/crawler/src
+      - name: Lint — templates webui
+        run: uv run python -m catalog_webui._dev.check_templates packages/webui/src/catalog_webui/adapters/templates
 
       # --- unit (fail-fast : stoppe au 1er paquet rouge) ---
-      - run: ( cd packages/matching && uv run pytest )
-      - run: ( cd packages/crawler  && uv run pytest )
-      - run: ( cd packages/verifier && uv run pytest )
-      - run: ( cd packages/webui    && uv run pytest )
+      - name: Tests unitaires — matching
+        run: ( cd packages/matching && uv run pytest )
+      - name: Tests unitaires — crawler
+        run: ( cd packages/crawler  && uv run pytest )
+      - name: Tests unitaires — verifier
+        run: ( cd packages/verifier && uv run pytest )
+      - name: Tests unitaires — webui
+        run: ( cd packages/webui    && uv run pytest )
 
       # --- build (amd64, --load local, cache gha) : 3 images taguées ci-<sha> ---
-      - uses: docker/setup-buildx-action@v3
-      - uses: ./.github/actions/docker-image
+      - name: Setup — buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build — image crawler (amd64)
+        uses: ./.github/actions/docker-image
         with:
           package: crawler
           push: 'false'
           platforms: linux/amd64
           tags: ${{ env.IMAGE_PREFIX }}-crawler:ci-${{ github.sha }}
-      - uses: ./.github/actions/docker-image
+      - name: Build — image verifier (amd64)
+        uses: ./.github/actions/docker-image
         with:
           package: verifier
           push: 'false'
           platforms: linux/amd64
           tags: ${{ env.IMAGE_PREFIX }}-verifier:ci-${{ github.sha }}
-      - uses: ./.github/actions/docker-image
+      - name: Build — image webui (amd64)
+        uses: ./.github/actions/docker-image
         with:
           package: webui
           push: 'false'
@@ -54,7 +69,8 @@ jobs:
           tags: ${{ env.IMAGE_PREFIX }}-webui:ci-${{ github.sha }}
 
       # --- integration (compose smoke consomme les images ci-<sha>) ---
-      - run: ( cd packages/crawler && uv run pytest -m compose_integration --no-cov -q )
+      - name: Intégration — stack compose (smoke)
+        run: ( cd packages/crawler && uv run pytest -m compose_integration --no-cov -q )
         env:
           IMAGE_TAG: ci-${{ github.sha }}
 
@@ -66,16 +82,21 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup — QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Setup — buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login — ghcr.io
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - id: meta-crawler
+      - name: Tags — crawler
+        id: meta-crawler
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_PREFIX }}-crawler
@@ -84,14 +105,16 @@ jobs:
             type=sha
             type=semver,pattern={{version}}
             type=raw,value=latest,enable={{is_default_branch}}
-      - uses: ./.github/actions/docker-image
+      - name: Publish — image crawler (amd64+arm64)
+        uses: ./.github/actions/docker-image
         with:
           package: crawler
           push: 'true'
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta-crawler.outputs.tags }}
 
-      - id: meta-verifier
+      - name: Tags — verifier
+        id: meta-verifier
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_PREFIX }}-verifier
@@ -100,14 +123,16 @@ jobs:
             type=sha
             type=semver,pattern={{version}}
             type=raw,value=latest,enable={{is_default_branch}}
-      - uses: ./.github/actions/docker-image
+      - name: Publish — image verifier (amd64+arm64)
+        uses: ./.github/actions/docker-image
         with:
           package: verifier
           push: 'true'
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta-verifier.outputs.tags }}
 
-      - id: meta-webui
+      - name: Tags — webui
+        id: meta-webui
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_PREFIX }}-webui
@@ -116,7 +141,8 @@ jobs:
             type=sha
             type=semver,pattern={{version}}
             type=raw,value=latest,enable={{is_default_branch}}
-      - uses: ./.github/actions/docker-image
+      - name: Publish — image webui (amd64+arm64)
+        uses: ./.github/actions/docker-image
         with:
           package: webui
           push: 'true'
