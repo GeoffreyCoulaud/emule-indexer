@@ -14,6 +14,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     --mount=type=bind,source=packages/crawler/pyproject.toml,target=packages/crawler/pyproject.toml \
     --mount=type=bind,source=packages/verifier/pyproject.toml,target=packages/verifier/pyproject.toml \
+    --mount=type=bind,source=packages/matching/pyproject.toml,target=packages/matching/pyproject.toml \
+    --mount=type=bind,source=packages/webui/pyproject.toml,target=packages/webui/pyproject.toml \
     uv sync --locked --no-install-workspace --package emule-indexer
 
 COPY . /app
