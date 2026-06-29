@@ -1,5 +1,7 @@
 # Exemples de déploiement composables (sans gluetun + clé en main) — design (2026-06-20)
 
+> **🔵 Note 2026-06-29** : la section §9 (gVisor / `CONTAINER_RUNTIME`) est dépréciée — gVisor a été retiré du projet (YAGNI).
+>
 > Spec issue d'une session de brainstorming « un sujet à la fois ». Sujet : fournir **plusieurs
 > exemples de déploiement** — dont des topologies **sans gluetun** — sous forme de **briques
 > composables avec points d'entrée distincts**, et un socle **monitoring clé en main**
