@@ -279,7 +279,7 @@ Pour pouvoir lancer **toutes** les suites :
 - **libseccomp + `pyseccomp`** (déjà dans le lock du paquet verifier) + un `no_new_privs` posable —
   **optionnel** ; sinon les tests seccomp sont skippés.
 - Un **`.env`** (copié de `.env.example`) pour les commandes compose **manuelles** : `WIREGUARD_PRIVATE_KEY`,
-  `SERVER_COUNTRIES`, `AMULE_EC_PASSWORD`, et `DOCKER_GID` (uniquement si port-sync). Note : le test
+  `SERVER_COUNTRIES`, `AMULE_EC_PASSWORD`. Note : le test
   `compose_integration` **stube lui-même** ces variables, donc le `.env` n'est pas requis pour le lancer.
 
 ---

@@ -93,18 +93,7 @@ quand certains réglages combinés sont incohérents.
 1. **VPN avec port forwarding** + `VPN_PORT_FORWARDING: "on"` dans `.env` (cherchez les fournisseurs
    marqués `PORT_FORWARDING: yes` dans la [liste gluetun](https://github.com/qdm12/gluetun-wiki/tree/main/setup/providers)).
 2. Le service **`docker-proxy`** (profil download, stack B / `deploy/examples/gluetun.yaml`), qui redémarre
-   amuled de façon confinée (le crawler ne voit jamais le socket Docker directement). Renseignez
-   `DOCKER_GID` dans `.env` (GID du groupe `docker` de l'hôte) :
-
-   ```bash
-   # Linux (toutes distributions courantes) :
-   getent group docker | cut -d: -f3
-   ```
-
-   > **⚠️ Linux uniquement.** `getent` et le groupe `docker` n'existent pas tels quels sur macOS ni
-   > sur Windows. **Docker Desktop et le mode rootless ne fonctionnent pas** pour Route A (voir le
-   > [runbook de dépannage](troubleshooting.md) si vous voulez comprendre pourquoi). Si vous
-   > êtes sur Docker Desktop : utilisez la Route B.
+   amuled de façon confinée (le crawler ne voit jamais le socket Docker directement).
 3. Dans `deploy/config/crawler/download.yaml` : décommentez le bloc `port_sync` (champs
    `gluetun_control_url: "http://gluetun:8000"` et `restarter_url: "http://docker-proxy:2375"`) ; la
    section `port_sync` de `deploy/config/crawler/crawler.yaml` contient les valeurs par défaut (réglage fin
@@ -231,31 +220,6 @@ scrape_configs:
 
 ---
 
-## Durcissement noyau (gVisor)
-
-**gVisor est une sandbox optionnelle** qui ajoute une couche d'isolation supplémentaire entre les
-conteneurs et le noyau Linux de l'hôte (utile pour isoler un processus C hostile, par ex. `ffprobe`
-sur un fichier malveillant). Sans gVisor, votre stack reste durcie par défaut (non-root,
-capabilities retirées, rootfs en lecture seule, verifier sans aucune sortie Internet) — gVisor est
-une couche **en plus**, pas un remplacement.
-
-```bash
-CONTAINER_RUNTIME=runsc docker compose -f deploy/examples/<fichier> --profile <observer|download> up -d   # Linux + runsc uniquement
-```
-
-> ⚠️ **Linux uniquement** — gVisor exige le runtime `runsc` enregistré sur l'hôte. Sur macOS ou
-> Windows (Docker Desktop), la commande échoue (« unknown runtime: runsc »). Dans ce cas, omettez
-> simplement le préfixe `CONTAINER_RUNTIME=runsc` : la stack tourne en `runc` (le runtime standard)
-> sans changer le comportement fonctionnel — vous perdez juste la couche gVisor.
-
-Pour savoir si votre hôte peut activer gVisor : `docker info | grep -i runtime` doit lister `runsc`.
-Sinon, voir la [doc d'installation gVisor](https://gvisor.dev/docs/user_guide/install/).
-
-La posture de sécurité complète (pourquoi gVisor vs. seccomp allowlist, etc.) est en
-« Limites connues » plus bas.
-
----
-
 ## Outils de catalogue
 
 Tous ces outils sont **opérateurs et ponctuels** (pas de boucle, jamais déclenchés par le crawler) et
@@ -369,13 +333,15 @@ webui.example.com {
 
 ## Limites connues / follow-ups
 
-- **Sandbox noyau (gVisor) — choix actés (2026-06-17)** : la sandbox optionnelle gVisor (`runsc`)
-  est la couche d'isolation noyau retenue pour le projet. Plusieurs alternatives ont été évaluées
-  puis **écartées explicitement** :
+- **Sandbox noyau — choix actés (2026-06-17, updated 2026-06-29)** : la sandbox optionnelle gVisor
+  (`runsc`) a été retirée du projet (YAGNI). Le plancher portable universel est suffisant :
+  conteneur durci (`cap_drop: ALL`, `no-new-privileges`, `read_only`, `internal`) + seccomp
+  par-enfant + rlimits, sur **n'importe quel** hôte Docker (Linux, Windows, macOS). Plusieurs
+  alternatives d'isolation niveau noyau ont été évaluées puis **écartées explicitement** :
   - Isolation par-enfant « étendue » (`net=none`, bwrap/montages RO réels, tmpfs dédié) :
     chacune de ces options exige `CAP_SYS_ADMIN` (qui annulerait le `cap_drop: ALL` du conteneur)
     ou des user namespaces non privilégiés (non portables : dépendants d'un réglage sysctl hôte,
-    en conflit avec le seccomp par défaut de Docker, et bwrap sous gVisor est fragile). Gain
+    en conflit avec le seccomp par défaut de Docker). Gain
     **marginal** face aux protections déjà en place (le seccomp par-enfant refuse déjà les sockets ;
     le réseau du verifier n'a **aucune sortie Internet** via `internal: true` ; le rootfs est
     monté en lecture seule).
@@ -383,11 +349,6 @@ webui.example.com {
     **écarté** car trop fragile, risque de faux positifs sur un média sain. Le seccomp par-enfant
     actuel utilise une **blocklist** (refuser explicitement les appels dangereux) — moins strict
     mais plus robuste.
-
-  **Plancher portable universel** = conteneur durci (`cap_drop: ALL`, `no-new-privileges`,
-  `read_only`, `internal`) + seccomp par-enfant + rlimits, sur **n'importe quel** hôte Docker.
-  **gVisor en supplément** pour les hôtes Linux qui ont le runtime `runsc` enregistré (cf.
-  « Durcissement noyau » plus haut).
 - **port-sync — validation réelle** : la boucle est construite ; sa validation **bout-en-bout**
   (port-check High-ID réel derrière le VPN) se fait via un déploiement réel.
 - **DV10 (download → quarantaine)** — Statut : **chaîne complète confirmée par lecture des sources

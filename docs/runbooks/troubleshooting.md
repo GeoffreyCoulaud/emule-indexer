@@ -141,8 +141,6 @@ Plusieurs causes, à vérifier dans cet ordre :
   à `/var/run/docker.sock` (mais sous `$XDG_RUNTIME_DIR`) et l'accès passe par l'UID, pas un groupe.
   Les deux → port-sync inopérant (détails + sources :
   [`docs/reference/2026-06-17-docker-desktop-rootless-socket.md`](reference/2026-06-17-docker-desktop-rootless-socket.md)).
-- **`DOCKER_GID` absent ou faux** dans `.env` : ce doit être le GID du groupe `docker` de l'hôte
-  (`getent group docker`).
 - **Conteneur amuled mal nommé.** Le proxy n'autorise QUE `POST .../containers/amuled/restart` : le
   conteneur doit s'appeler **exactement `amuled`** (épinglé via `container_name: amuled` dans
   `deploy/examples/gluetun.yaml`). Sous un autre nom, le restart fait **404** et le port-sync ne fait rien.

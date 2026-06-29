@@ -17,7 +17,7 @@ d'être à l'aise avec un **terminal** et **Docker** (orientation Linux/serveur)
   tourner : matrice de choix (stacks A/B/C/D), profils observer/download, secrets, premier boot, Low-ID.
 - **[Runbook d'administration](runbooks/administration.md)** — *exploiter et régler* un nœud monté :
   cycle de vie, High-ID (optionnel), analyse antivirus (clamav), métriques Prometheus, durcissement
-  gVisor, outils de catalogue (fusion/compaction/validation), limites connues.
+  durcissement conteneur, outils de catalogue (fusion/compaction/validation), limites connues.
 - **[Runbook de dépannage](runbooks/troubleshooting.md)** — *résoudre un problème* concret, quel que
   soit votre niveau : symptôme → cause → solution.
 - **[Légalité, confidentialité, éthique](legal-and-privacy.md)** — ce que votre nœud catalogue et

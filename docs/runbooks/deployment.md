@@ -9,7 +9,7 @@ Ce guide explique comment **choisir son scénario de déploiement et lancer la s
 > avant de revenir ici. L'état par défaut (**Low-ID**) ne demande aucun réglage réseau avancé.
 
 > Une fois le nœud monté : pour l'**exploiter et le régler** (cycle de vie, High-ID, analyse
-> antivirus, métriques, durcissement gVisor, outils de catalogue), voir le
+> antivirus, métriques, durcissement conteneur, outils de catalogue), voir le
 > **[Runbook d'administration](administration.md)** ; en cas de souci, le
 > **[Runbook de dépannage](troubleshooting.md)**.
 
@@ -61,7 +61,7 @@ joignabilité) :
 | Stack | Expose son IP domestique | Ouvrir un port sur sa box | Rend High-ID possible | Compatible Docker Desktop (Win/macOS) | Demande un VPN commercial | VPN avec port forwarding |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|
 | **A** · gluetun, Low-ID | Non | Non | Non | Oui | **Oui** | Non |
-| **B** · gluetun, High-ID | Non | Non | **Oui** | **Non** | **Oui** | **Oui** |
+| **B** · gluetun, High-ID | Non | Non | **Oui** | **Oui** | **Oui** | **Oui** |
 | **C** · sans VPN, Low-ID | **Oui** | Non | Non | Oui | Non | Non |
 | **D** · sans VPN, High-ID | **Oui** | **Oui** | **Oui** | Oui | Non | Non |
 
@@ -72,10 +72,6 @@ Cellules non triviales :
   VPN avec port forwarding **activé** dans `.env`, (2) un service `docker-proxy` qui lit le socket
   Docker, (3) le `port_sync` armé dans `deploy/config/crawler/download.yaml` (étape 3). Si **une seule**
   manque, le crawler reste en Low-ID sans erreur visible.
-- **Stack B incompatible Docker Desktop** (Win/macOS) : le port-sync a besoin d'un accès direct au
-  socket Docker que Docker Desktop n'expose pas correctement. Voir
-  `docs/reference/2026-06-17-docker-desktop-rootless-socket.md` (état observé en juin 2026, à
-  re-vérifier si Docker Desktop évolue).
 - **« Expose IP domestique »** : Non pour A/B (sortie par le VPN), Oui pour C/D (sortie par la
   connexion perso, sauf VPN installé directement sur le système d'exploitation hôte).
 
@@ -105,7 +101,7 @@ Les prérequis *contraignants* figurent déjà comme colonnes dans la matrice. D
 
 - **A** : abonnement VPN WireGuard (n'importe lequel supporté par gluetun) → clé privée dans `.env` ;
   `/dev/net/tun` disponible sur l'hôte (fourni aussi par Docker Desktop). Aucun port à ouvrir.
-- **B** : **hôte Linux Docker rootful** + VPN **avec port forwarding** (cherchez les fournisseurs
+- **B** : VPN **avec port forwarding** (cherchez les fournisseurs
   marqués `PORT_FORWARDING: yes` dans la [liste gluetun](https://github.com/qdm12/gluetun-wiki/tree/main/setup/providers)
   — en juin 2026, ProtonVPN, PIA, PrivateVPN et PerfectPrivacy sont éligibles) → clé dans `.env` ;
   armer le bloc `port_sync` dans `deploy/config/crawler/download.yaml` (voir étape 3).
@@ -147,17 +143,11 @@ Selon la stack choisie (§2), les prérequis ci-dessous doivent être réunis **
   pare-feu de l'hôte (Windows compris). « Redirigé » = règle de NAT/port forwarding dans l'interface
   d'admin de votre box ; demandez à votre fournisseur d'accès si vous ne l'avez jamais fait.
 
-**Optionnel — gVisor (sandbox de noyau) :**
-- Le runtime conteneur `runsc` enregistré sur l'hôte (**Linux uniquement** — gVisor n'existe pas sur
-  Docker Desktop). Voir § Options orthogonales.
-
 **Vérification rapide avant de continuer :**
 
 ```bash
 docker compose version                       # toutes stacks : doit afficher v2.x
 ls -la /dev/net/tun                          # stacks A/B : doit exister
-getent group docker                          # stack B : doit retourner une ligne
-docker info | grep -i runtime                # gVisor optionnel : `runsc` doit apparaître
 ```
 
 Si une commande échoue, traitez-la avant de passer à l'étape 2.
@@ -192,7 +182,6 @@ Variables à renseigner, par stack :
 | `SERVER_COUNTRIES` | A, B | Pays de sortie VPN, **nom complet en anglais** (`Switzerland`, `France`, `Germany`). Pas le code ISO. | Liste des pays supportés par votre fournisseur. |
 | `VPN_SERVICE_PROVIDER` | A, B | Nom du fournisseur tel qu'attendu par gluetun (`protonvpn`, `pia`, `privatevpn`, `perfectprivacy`, ...). | [Liste gluetun](https://github.com/qdm12/gluetun-wiki/tree/main/setup/providers). |
 | `VPN_PORT_FORWARDING` | B | `on` (active la boucle port-sync) ou `off` (Low-ID). | Vous décidez. `off` = Low-ID, suffisant pour cataloguer. |
-| `DOCKER_GID` | B | GID numérique du groupe Unix `docker` sur **l'hôte**, utilisé par le service `docker-proxy` pour accéder au socket Docker. | `getent group docker \| cut -d: -f3` |
 | `LISTEN_PORT` / `LISTEN_PORT_UDP` | D | Port que vous avez redirigé sur votre box (défaut `4662` TCP + `4672` UDP). | Identique à la redirection NAT de votre box (étape 1). |
 | `GRAFANA_PWD` | Toutes, si `--profile monitoring` | Mot de passe que **vous choisissez** pour le compte `admin` de Grafana. | Vous l'inventez. |
 
@@ -271,16 +260,6 @@ docker compose -f deploy/examples/sans-vpn-lowid.yaml --profile observer up -d
 # Stack A, mode download + monitoring :
 docker compose -f deploy/examples/gluetun.yaml --profile download --profile monitoring up -d
 ```
-
-```bash
-# Stack D, mode download, avec gVisor — ⚠️ Linux uniquement (runsc enregistré sur l'hôte) :
-CONTAINER_RUNTIME=runsc docker compose -f deploy/examples/sans-vpn-highid.yaml --profile download up -d
-```
-
-> ⚠️ **`CONTAINER_RUNTIME=runsc` ne fonctionne que sur Linux** avec gVisor installé. Sur macOS ou
-> Windows (Docker Desktop), la commande échoue avec « unknown runtime: runsc ». Si vous n'avez pas
-> gVisor, retirez simplement le préfixe `CONTAINER_RUNTIME=runsc` — la stack tourne en `runc`
-> (runtime conteneur Docker standard) sans changer de comportement fonctionnel.
 
 #### Premier boot : ce qui est normal (et ce qui ne l'est pas)
 
@@ -361,7 +340,6 @@ de la matrice car elles seraient cochées pour toutes :
 |---|---|---|
 | **Mode** | `--profile observer` (crawl seul) ou `--profile download` (+ téléchargement + vérif) | aucune |
 | **Monitoring** | `--profile monitoring` (Prometheus + Grafana clé en main) | ajouter `GRAFANA_PWD` dans `.env` |
-| **gVisor** | `CONTAINER_RUNTIME=runsc` (prefixer la commande `docker compose`) | Linux uniquement + `runsc` enregistré sur l'hôte |
 
 ---
 
@@ -396,7 +374,7 @@ décrits dans le [runbook d'administration](administration.md).
 
 - **[Runbook d'administration](administration.md)** — exploiter et régler un nœud monté :
   cycle de vie (arrêt/mise à jour/persistance), High-ID (optionnel), analyse antivirus (clamav),
-  métriques Prometheus, durcissement gVisor, outils de catalogue, limites connues.
+  métriques Prometheus, durcissement conteneur, outils de catalogue, limites connues.
 - **[Runbook de dépannage](troubleshooting.md)** — symptômes courants et résolutions (amuled
   ne se connecte pas, fichier sain en `suspicious`, port-sync inopérant, droits de volume…).
 - **[Guide des tests](testing-guide.md)** — valider/tester en profondeur (suites d'intégration,

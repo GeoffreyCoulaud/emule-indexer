@@ -63,7 +63,6 @@ _CONFIG_ENV = {
     "AMULE_EC_PASSWORD": "x",
     "GRAFANA_PWD": "x",
     "SERVER_COUNTRIES": "",
-    "DOCKER_GID": "0",
     "LISTEN_PORT": "4662",
     "LISTEN_PORT_UDP": "4672",
 }

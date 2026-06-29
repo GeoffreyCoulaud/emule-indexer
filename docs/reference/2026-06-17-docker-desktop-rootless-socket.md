@@ -1,5 +1,7 @@
 # Docker Desktop / rootless et le socket : pourquoi le port-sync exige un Docker rootful natif (2026-06-17)
 
+> **🔵 Mise à jour 2026-06-29** : le `docker-proxy` tourne désormais en **root** (plus de `user: 65534:${DOCKER_GID}`), ce qui rend le port-sync compatible avec **Docker Desktop** (Windows/macOS). Le proxy reste confiné (`cap_drop: ALL`, `read_only`, `no-new-privileges`, allowlist restreinte à `POST /containers/amuled/restart`). `DOCKER_GID` a été supprimé. Ce fichier est conservé pour l'historique de l'analyse.
+>
 > ⚠️ **Observation datée — 2026-06-17.** L'écosystème Docker Desktop évolue rapidement. Cette note
 > reflète le comportement observé en mi-2026 ; vérifiez sur votre version courante avant de partir
 > du principe que le comportement décrit est encore d'actualité. Le **résumé opérateur** (« Docker

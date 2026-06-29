@@ -174,7 +174,7 @@ Si vous opérez en collaboration avec d'autres chercheurs, voir
 ## Pour aller plus loin
 
 - [`runbooks/administration.md`](runbooks/administration.md) — opérations courantes, sécurité du
-  durcissement, gVisor.
+  durcissement, durcissement conteneur.
 - [`runbooks/troubleshooting.md`](runbooks/troubleshooting.md) — quand quelque chose casse.
 - [`CLAUDE.md`](../CLAUDE.md) — invariants de design (notamment : « le sujet du catalogue est le
   fichier, jamais la personne »).

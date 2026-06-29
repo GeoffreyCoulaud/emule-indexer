@@ -380,6 +380,7 @@ Répartition par sévérité **après révision des vérificateurs** (la sévér
 
 #### [MEDIUM→high] Le knob gVisor `CONTAINER_RUNTIME` ne couvre pas amuled (composant le plus exposé)
 - **Statut** : confirmed (1 high, 1 medium) | **Perspective** : `deployment-packaging#2`
+- **🔵 Résolu 2026-06-29** : `CONTAINER_RUNTIME` a été supprimé (gVisor retiré, YAGNI).
 - **Fichiers** : `examples/sans-vpn-lowid.yaml:10-13` ; `examples/gluetun.yaml:30-34` ; `bricks/compose.core.yaml:19`
 - **Description** : le `runtime` est appliqué à crawler/verifier/webui mais PAS à `amuled`, qui parse en continu du trafic eD2k/Kad hostile sur image tierce. **Plus grave que le knob seul** : amuled n'a AUCUN durcissement plancher (pas de cap_drop, read_only, no-new-privileges, user, pids/mem_limit), contredisant l'invariant MVP §10.3 (« amuled sandboxé… s'applique aux DEUX modes ») alors que §10.2 modélise « RCE amuled » comme menace. L'exclusion gVisor seule est documentée (images tierces sur runc), mais l'absence du plancher portable ne l'est pas. En highid, un port entrant est redirigé vers amuled.
 - **Correctif** : aligner amuled sur le floor (cap_drop ALL, no-new-privileges, pids/mem_limit) — faisable comme freshclam (image tierce déjà durcie) — et propager `runtime`. Documenter toute exclusion délibérée.
@@ -416,6 +417,7 @@ Répartition par sévérité **après révision des vérificateurs** (la sévér
 
 #### [LOW] docker-proxy : `DOCKER_GID` défaut 0 (groupe root)
 - **Statut** : confirmed (les deux, low) | **Perspective** : `deployment-packaging#5`
+- **🔵 Résolu 2026-06-29** : `DOCKER_GID` a été supprimé. Le proxy tourne en root, compatible Docker Desktop.
 - **Fichiers** : `examples/gluetun.yaml:48-54` (`user: "65534:${DOCKER_GID:-0}"`) ; `.env.example:15` (vide)
 - **Description** : sur hôte rootful (socket `660 root:docker`), gid 0 ≠ groupe docker → le proxy ne peut pas lire le socket → restart échoue en 403 silencieux → reste Low-ID (échec absorbé, pas de fail-fast). Le `:-0` masque la config manquante. Cadrage « groupe root » surestimé (gid 0 donne MOINS d'accès, pas une escalade).
 - **Correctif** : `${DOCKER_GID:?renseigner le GID du groupe docker}` pour fail-fast.

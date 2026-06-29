@@ -51,7 +51,9 @@ services:
       - "-proxyport=2375"
       - "-socketpath=/var/run/docker.sock"
       - "-allowPOST=/v1\\..{1,2}/containers/amuled/restart"
-    user: "65534:${DOCKER_GID:-0}"
+    # Le proxy tourne en root (user par défaut) : le socket Docker bind-monté apparaît root:root
+    # sous Docker Desktop, et le proxy est déjà confiné (cap_drop: ALL, read_only, no-new-privileges,
+    # allowlist restreinte à UN endpoint POST /containers/amuled/restart). Compatible partout.
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
