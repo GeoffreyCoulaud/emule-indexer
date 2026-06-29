@@ -1,5 +1,5 @@
-# crawler.yml SMOKE — mode DOWNLOAD (download.enabled: true => health-check verifier au
-# démarrage). Cadences courtes (le smoke vérifie le câblage, pas la durée).
+# crawler.yml SMOKE — mode DOWNLOAD (download.enabled: true =>
+# health-check verifier au démarrage). Cadences courtes.
 cycle_interval_seconds: 5.0
 search_poll_budget_seconds: 3.0
 search_poll_interval_seconds: 1.0

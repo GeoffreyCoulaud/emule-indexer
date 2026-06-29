@@ -1,5 +1,5 @@
-# crawler.observer.yml SMOKE — mode OBSERVATEUR (pas de section download => boucles dl/verif
-# OFF). Cadences courtes. EC host = amuled (le smoke retire gluetun).
+# crawler.observer.yml SMOKE — mode OBSERVATEUR (pas de section
+# download => boucles dl/verif OFF). Cadences courtes.
 cycle_interval_seconds: 5.0
 search_poll_budget_seconds: 3.0
 search_poll_interval_seconds: 1.0
