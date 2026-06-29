@@ -52,11 +52,11 @@ _IMAGE_TAG = os.environ.get("IMAGE_TAG")
 _USES_PREBUILT = _IMAGE_TAG is not None
 _BUILD_FLAGS: tuple[str, ...] = () if _USES_PREBUILT else ("--build",)
 
-_ENTRY_POINTS = ("gluetun", "sans-vpn-lowid", "sans-vpn-highid")
+_ENTRY_POINTS = ("gluetun", "direct")
 _CONFIG_CASES: tuple[tuple[str, tuple[str, ...]], ...] = tuple(
     (entry, profiles)
     for entry in _ENTRY_POINTS
-    for profiles in (("observer",), ("download",), ("download", "monitoring"))
+    for profiles in ((), ("download",), ("download", "monitoring"), ("webui",))
 )
 _CONFIG_ENV = {
     "WIREGUARD_PRIVATE_KEY": "x",
@@ -64,7 +64,6 @@ _CONFIG_ENV = {
     "GRAFANA_PWD": "x",
     "SERVER_COUNTRIES": "",
     "LISTEN_PORT": "4662",
-    "LISTEN_PORT_UDP": "4672",
 }
 
 # Projet isolé (préfixe unique par run) pour ne JAMAIS toucher une stack réelle de l'hôte.
@@ -274,7 +273,7 @@ def test_download_without_verifier_fails_fast(
 
 @pytest.mark.parametrize("entry,profiles", _CONFIG_CASES)
 def test_entrypoint_config_renders(entry: str, profiles: tuple[str, ...]) -> None:
-    """`docker compose -f deploy/examples/<entry>.yaml --profile … config` rend sans erreur.
+    """`docker compose -f deploy/<entry>.compose.yml --profile … config` rend sans erreur.
 
     Verrouille include + forward-refs + ancres/merge + interpolation (pas de daemon requis ;
     les sources de bind-mount n'ont pas besoin d'exister pour `config`).
@@ -286,7 +285,7 @@ def test_entrypoint_config_renders(entry: str, profiles: tuple[str, ...]) -> Non
         "docker",
         "compose",
         "-f",
-        f"deploy/examples/{entry}.yaml",
+        f"deploy/{entry}.compose.yml",
         *profile_flags,
         "config",
     ]
