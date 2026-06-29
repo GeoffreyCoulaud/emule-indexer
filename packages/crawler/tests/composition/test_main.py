@@ -53,8 +53,8 @@ def _write_config(tmp_path: Path, *, body: str = _UNIFIED_CONFIG) -> Path:
 def _args(config: Path) -> argparse.Namespace:
     return argparse.Namespace(
         config=config,
-        targets=_CONFIG / "targets.yaml",
-        matcher=_CONFIG / "matcher.yaml",
+        targets=_CONFIG / "targets.yml",
+        matcher=_CONFIG / "matcher.yml",
     )
 
 
@@ -63,9 +63,9 @@ def _argv(config: Path) -> list[str]:
         "--config",
         str(config),
         "--targets",
-        str(_CONFIG / "targets.yaml"),
+        str(_CONFIG / "targets.yml"),
         "--matcher",
-        str(_CONFIG / "matcher.yaml"),
+        str(_CONFIG / "matcher.yml"),
     ]
 
 
@@ -251,7 +251,7 @@ def test_validate_config_rejects_matcher_config_error(
         "--config",
         str(_write_config(tmp_path)),
         "--targets",
-        str(_CONFIG / "targets.yaml"),
+        str(_CONFIG / "targets.yml"),
         "--matcher",
         str(bad_matcher),
     ]
@@ -273,7 +273,7 @@ def test_validate_config_rejects_config_error_in_targets(
         "--targets",
         str(bad_targets),
         "--matcher",
-        str(_CONFIG / "matcher.yaml"),
+        str(_CONFIG / "matcher.yml"),
     ]
     code = entry.main(argv)
     assert code == 1
