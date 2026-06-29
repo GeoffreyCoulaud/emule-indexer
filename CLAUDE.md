@@ -86,7 +86,7 @@ Integration suites (Docker / ffmpeg, deselected by default, excluded from covera
 - **Subagent-driven execution** (Act phase) + **holistic review** (Verify phase): the cross-cutting review regularly catches bugs — don't skip it.
 - For library/framework/CLI questions, use the **context7 MCP** (current docs), not recalled knowledge.
 
-## Workflow — Discuss → Plan → Act → Verify → Wrap
+## Workflow — Discuss → Spec → Act → Verify → Wrap
 
 Five phases, always in order. **Committing is cheap** — you're allowed to commit autonomously.
 
@@ -94,14 +94,14 @@ Five phases, always in order. **Committing is cheap** — you're allowed to comm
 
 **Free-form text** discussion with the user. Use `brainstorm` or `pick-my-brain` skills if clarification is needed. **No `AskUserQuestion` tool** — ask the question in the message directly. No code, no plan — just understanding.
 
-### 2. Plan
+### 2. Spec
 
 Two forms, depending on complexity:
 
-- **Simple / obvious** : inline plan in the conversation, a few paragraphs.
-- **Structured** : plan markdown (`docs/plans/<date>-<slug>.md`) + spec markdown (`docs/specs/<date>-<slug>.md`) if needed.
+- **Simple / obvious** : inline spec in the conversation, a few paragraphs.
+- **Structured** : spec markdown (`docs/specs/<date>-<slug>.md`) + plan markdown (`docs/plans/<date>-<slug>.md`) if needed.
 
-**The plan is reviewed and approved by the user** before writing specs (if any). Specs are not reviewed — they follow from the approved plan.
+**The spec is reviewed and approved by the user** before writing plans (if any). Plans are not reviewed — they follow from the approved spec.
 
 **Do not use `EnterPlanMode`.** The project workflow is self-contained, not coupled to Claude Code's plan-mode feature.
 
