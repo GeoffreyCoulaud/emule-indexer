@@ -9,9 +9,7 @@ démarrer, spec §5/§14). Aucune variable d'environnement (spec §3).
 from dataclasses import dataclass
 from typing import Any
 
-
-class ConfigError(Exception):
-    """Config invalide → refus de démarrer (fail-fast, spec §5/§14)."""
+from emule_indexer.adapters.config.errors import ConfigError  # ré-exporté (compat)
 
 
 @dataclass(frozen=True)
