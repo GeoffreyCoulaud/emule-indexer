@@ -88,9 +88,12 @@ doit être saisi deux fois, et les fichiers de config doivent être copiés depu
 - **D8 — Service `crawler` unique.** Remplace `crawler-observer` + `crawler-download`. Sans profil
   (toujours actif), monte l'unique `crawler.yml`. Profils réservés aux satellites : `download`
   (verifier + freshclam), `webui`, `monitoring` (prometheus + grafana).
-- **D9 — Chemin par défaut = `direct` + observer (Low-ID).** C'est le démarrage le plus simple. Le
-  VPN devient l'option « masquer son IP », pas le défaut. Le runbook le présente ainsi, avec une
-  mention honnête « ton IP est visible des pairs » pour un choix informé.
+- **D9 — Chemin par défaut = `direct` + observer (Low-ID).** C'est le démarrage le plus simple, et
+  il fonctionne pleinement (recherche, catalogage, téléchargement). Le **High-ID** (plus de pairs
+  disponibles ⇒ meilleure recherche et meilleur téléchargement) est une **option recommandée mais
+  non obligatoire**, par ouverture d'un port (reste `direct`, IP exposée) **ou** VPN à port
+  forwarding (masque l'IP en prime). Le runbook présente le défaut ainsi, avec une mention honnête
+  « ton IP est visible des pairs » en `direct`.
 
 ## 4. Modèle cible
 
@@ -193,19 +196,27 @@ l'arbre exact est laissé au plan ; les principes (sections cohérentes, `enable
 
 ### 4.4 Lancement
 
+Deux points de référence, tous deux **sans VPN** (le plus simple à démarrer) :
+
 ```bash
-# Le plus simple : observer, sans VPN (Low-ID).
+# (a) Observer — sans VPN. Démarrage minimal : catalogue seul.
 docker compose -f deploy/direct.compose.yml up -d
 
-# Download + monitoring, sans VPN.
-docker compose -f deploy/direct.compose.yml --profile download --profile monitoring up -d
-
-# Derrière VPN (masque l'IP).
-docker compose -f deploy/gluetun.compose.yml up -d
+# (b) Complet — sans VPN. Download + vérif + monitoring + webui.
+#     Prérequis : download.enabled: true dans crawler.yml.
+docker compose -f deploy/direct.compose.yml \
+  --profile download --profile monitoring --profile webui up -d
 ```
 
-Mode download = basculer `download.enabled: true` dans `crawler.yml` **et** ajouter
-`--profile download`.
+**High-ID — recommandé, pas obligatoire.** Un nœud `direct` tourne par défaut en **Low-ID** :
+recherche, catalogage et téléchargement fonctionnent, mais le nœud atteint **moins de pairs**. Pour
+un **High-ID** (plus de pairs ⇒ meilleure recherche et meilleur téléchargement), deux voies au
+choix, aucune obligatoire :
+
+- **ouvrir un port** sur sa box (NAT → `LISTEN_PORT`), en restant `direct` — simple, mais l'IP
+  domestique est exposée aux pairs ;
+- **passer par le VPN** avec port forwarding (`gluetun.compose.yml` + `port_sync.enabled: true`) —
+  masque l'IP *et* obtient le High-ID automatiquement.
 
 ## 5. Impact code (`packages/crawler`)
 
