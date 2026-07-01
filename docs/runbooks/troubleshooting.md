@@ -51,6 +51,30 @@ le *régler*, le [runbook d'administration](administration.md).
   *(Si une version 4.x sort dans le futur, ré-évaluer la compatibilité avant migration — ce projet
   n'a été éprouvé qu'avec 3.0.0-1.)*
 
+### Le crawler refuse de démarrer : « variable d'environnement '…' référencée mais absente »
+
+- **Symptôme.** `docker compose logs crawler` affiche
+  `Config invalide, refus de démarrer : … : variable d'environnement 'AMULE_EC_PASSWORD' référencée mais absente`,
+  alors que la variable est bien renseignée dans `.env`.
+- **Cause.** Compose ne lit `.env` que pour substituer les `${...}` **dans les fichiers compose**.
+  Le crawler, lui, interpole les `${VAR}` de `crawler.yml` depuis **son propre** environnement de
+  conteneur. Une variable référencée dans `crawler.yml` doit donc être injectée explicitement dans
+  le service `crawler` (bloc `environment:` de `deploy/base.compose.yml`) — sinon le process ne la
+  voit pas. `AMULE_EC_PASSWORD` y est câblé par défaut.
+- **Solution.** Si vous ajoutez un **nouveau** `${VAR}` dans `crawler.yml` (typiquement en activant
+  une URL de notification `notifications[].url: "discord://${DISCORD_WEBHOOK_ID}/…"`), ajoutez la
+  même variable au bloc `environment:` du service `crawler` :
+  ```yaml
+  # deploy/base.compose.yml
+  crawler:
+    environment:
+      AMULE_EC_PASSWORD: ${AMULE_EC_PASSWORD:?}
+      DISCORD_WEBHOOK_ID: ${DISCORD_WEBHOOK_ID:?}     # ← nouvelle ligne par secret ajouté
+      DISCORD_WEBHOOK_TOKEN: ${DISCORD_WEBHOOK_TOKEN:?}
+  ```
+  Le mapping est **explicite** (et non `env_file: .env`) pour le moindre privilège : le crawler n'a
+  pas à voir la clé WireGuard ni les autres secrets du déploiement.
+
 ### Le statut « Low-ID » apparaît dans les logs
 
 - **Ce n'est pas une panne.** Low-ID est l'**état normal** par défaut : recherche, catalogage et

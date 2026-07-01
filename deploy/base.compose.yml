@@ -23,6 +23,12 @@ x-crawler-common: &crawler-common
 services:
   crawler:
     <<: *crawler-common
+    # Secrets référencés par ${VAR} dans crawler.yml : le crawler les interpole depuis SON
+    # os.environ (adapter de config), donc ils doivent être injectés ici. Mapping explicite
+    # (pas env_file: .env) pour le moindre privilège — le crawler n'a pas à voir la clé VPN & co.
+    # :? => compose up échoue tôt et clairement si le secret manque.
+    environment:
+      AMULE_EC_PASSWORD: ${AMULE_EC_PASSWORD:?}
     command:
       - "--config"
       - "/app/config/crawler.yml"
