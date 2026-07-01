@@ -14,7 +14,7 @@ cases:
     target_id: S2E062A
     rule_name: id_segment_exact
 
-  - id: match_via_teletoon_titre_sans_segment_id
+  - id: match_via_teletoon_source_marker_title
     # Sans numéro de segment -> id_segment_exact faux, mais teletoon (source_marker) + titre -> title_confirmed (download).
     filename: "[TV] KERORO MISSION TITAR « Les demoiselles cambrioleuses » [21 septembre 2008 sur TELETOON].avi"
     tier: download

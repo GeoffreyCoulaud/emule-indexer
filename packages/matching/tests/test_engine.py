@@ -427,7 +427,7 @@ def _mono_routing_engine() -> MatchingEngine:
     return MatchingEngine(config, (_TARGET_MONO, _TARGET_62A))
 
 
-def test_evaluate_bare_number_on_mono_target_is_notify_numero_nu_mono() -> None:
+def test_evaluate_bare_number_on_mono_target_is_notify_numero_nu() -> None:
     # "Keroro 10.avi" : numéro nu sur cible mono -> notify/numero_nu, JAMAIS download.
     decision = _mono_routing_engine().evaluate(FileCandidate(filename="Keroro 10.avi"))
     assert decision is not None
@@ -436,7 +436,7 @@ def test_evaluate_bare_number_on_mono_target_is_notify_numero_nu_mono() -> None:
     assert decision.target_id == "S1E010A"
 
 
-def test_evaluate_bare_number_on_bi_segment_target_never_fires_numero_nu_mono() -> None:
+def test_evaluate_bare_number_on_bi_segment_target_never_fires_numero_nu() -> None:
     # "Keroro 62.avi" : 62 est le numéro absolu de la cible BI-segment 62A -> {mono_gate}
     # neutralise segment_id_loose pour elle (never-match) -> numero_nu/numero_nu_confirmed
     # ne font jamais feu pour elle ; seul keroro_large (catalog) matche (départage
@@ -482,3 +482,4 @@ def test_evaluate_opening_with_bare_number_demoted_to_catalog_by_not_episode() -
     assert decision is not None
     assert decision.tier == "catalog"
     assert decision.rule_name == "keroro_large"
+    assert decision.target_id == "S1E010A"
