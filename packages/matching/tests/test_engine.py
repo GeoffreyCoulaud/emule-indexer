@@ -182,7 +182,8 @@ def test_evaluate_notify_tier_via_title_review() -> None:
 def test_evaluate_tiebreak_same_tier_lowest_target_id_wins() -> None:
     # Fichier "Keroro" seul -> 62A et 62B donnent TOUS DEUX keroro_large (catalog, index 3).
     # Même palier ET même index -> départage par target_id : S2E062A < S2E062B.
-    decision = _canonical_engine().evaluate(FileCandidate(filename="Keroro Gunso opening.mkv"))
+    # NB : filler neutre (pas "Gunso", désormais veto-é par foreign_lang comme titre japonais).
+    decision = _canonical_engine().evaluate(FileCandidate(filename="Keroro rediffusion.mkv"))
     assert decision is not None
     assert decision.tier == "catalog"
     assert decision.rule_name == "keroro_large"
@@ -257,10 +258,10 @@ def test_engine_resolves_each_target_once_at_construction() -> None:
 
 
 def test_evaluate_explanation_lists_coverage_value_even_below_threshold() -> None:
-    # "keroro gunso.mkv" gagne en catalog (keroro) sur S2E062A ; title_hit (titre 62A) a un
+    # "keroro rediffusion.mkv" gagne en catalog (keroro) sur S2E062A ; title_hit (titre 62A) a un
     # score 0.0 < 0.6 : il N'EST PAS dans tokens_matched mais SON SCORE figure dans
     # coverage_values (utile pour déboguer un seuil).
-    decision = _canonical_engine().evaluate(FileCandidate(filename="keroro gunso.mkv"))
+    decision = _canonical_engine().evaluate(FileCandidate(filename="keroro rediffusion.mkv"))
     assert decision is not None
     coverage_names = [name for name, _ in decision.explanation.coverage_values]
     assert "title_hit" in coverage_names

@@ -30,7 +30,8 @@ cases:
 
   - id: keroro_only_catalog_tiebreak_target_id
     # "Keroro" seul -> keroro_large (catalog) sur 62A ET 62B ; départage target_id -> 62A.
-    filename: "Keroro Gunso opening.mkv"
+    # NB : filler neutre (pas "Gunso", désormais veto-é comme titre japonais).
+    filename: "Keroro rediffusion.mkv"
     tier: catalog
     target_id: S2E062A
     rule_name: keroro_large
@@ -139,4 +140,30 @@ cases:
 
   - id: decoy_signor_italian
     filename: "Keroro signor N°062A.avi"
+    discarded: true
+
+  # --- Anti-match enrichi (filtre aMule 2026-07-01) : marqueurs étrangers -> écartés ---
+  - id: decoy_japanese_marker_japan
+    # "Japan" borné -> foreign_lang -> écarté (version japonaise, pas le doublage FR).
+    filename: "Keroro Mission Titar 62 Japan.avi"
+    discarded: true
+
+  - id: decoy_japanese_code_jap
+    # "JAP" borné (parenthèses = non-word) -> foreign_lang -> écarté.
+    filename: "Keroro Titar N°062A (JAP).avi"
+    discarded: true
+
+  - id: decoy_japanese_title_gunso
+    # "Gunso"/"Gunsou" = titre japonais ケロロ軍曹 -> foreign_lang -> écarté.
+    filename: "Keroro Gunso 62A.avi"
+    discarded: true
+
+  - id: decoy_english_title_sgt_frog
+    # "Sgt. Frog" = titre anglais -> foreign_lang -> écarté.
+    filename: "Sgt. Frog Keroro N°062A.avi"
+    discarded: true
+
+  - id: decoy_josconcillo
+    # "Josconcillo" (release étrangère connue) -> foreign_lang -> écarté.
+    filename: "Keroro Titar 62 Josconcillo.avi"
     discarded: true

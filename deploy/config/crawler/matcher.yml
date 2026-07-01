@@ -5,7 +5,7 @@ tokens:
   keroro:        { keyword: keroro }
   titar:         { keyword: titar }
   keroro_titar:  { any: [keroro, titar] }
-  foreign_lang:  { regex: "\\b(ITA|KOR|Korean|Italiano|Coreano|VOSTFR|VOSTA|Subs?FR|Espa[nñ]ol|English\\s?Dub|ENG)\\b|dino-riders|guerriero|risveglio|sarxento|sargento|benjo|fatacolorata|catala|signor|\\((?:ita|j|jp|k|kr|ks)\\)" }
+  foreign_lang:  { regex: "\\b(ITA|KOR|Korean|Italiano|Coreano|VOSTFR|VOSTA|Subs?FR|Espa[nñ]ol|English\\s?Dub|ENG|Japan|JAP|Gunsou?)\\b|dino-riders|guerriero|risveglio|sarxento|sargento|benjo|fatacolorata|catala|signor|josconcillo|sgt\\.?\\s*frog|\\((?:ita|j|jp|k|kr|ks)\\)" }
   french_safe:   { not: foreign_lang }
   is_keroro:     { all: [french_safe, keroro_titar] }
   not_episode:   { regex: "opening|ending|g[eé]n[eé]rique|\\bsample\\b|preview|trailer|bande.?annonce" }
