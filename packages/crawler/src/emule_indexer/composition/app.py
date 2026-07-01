@@ -225,7 +225,7 @@ class CrawlerApp:
             await run_search_cycle(
                 workers=workers,
                 clients=clients,
-                targets=self._targets,
+                keywords=self._crawler_config.search_keywords,
                 rng=self._rng,
                 node_id=node_id,
                 cycle_index=cycle_index,

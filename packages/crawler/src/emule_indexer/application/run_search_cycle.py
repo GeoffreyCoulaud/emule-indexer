@@ -3,7 +3,7 @@
 Couche APPLICATION. ``run_search_cycle`` exécute UN cycle (spec §4) :
 
   1. ``network_status`` de CHAQUE travailleur → ``effective_coverage`` agrégé (loggé).
-  2. ``generate_keywords(targets)`` → larges + ciblés ; ``shuffle_for_cycle`` (seed =
+  2. ``generate_keywords(config_keywords)`` → sentinelles ; ``shuffle_for_cycle`` (seed =
      node_id + index de cycle).
   3. enfile un ``SearchTask`` (mot-clé × canal) dans une ``asyncio.Queue`` partagée.
   4. N travailleurs drainent en parallèle (un par instance) ; sentinelle par travailleur.
@@ -29,7 +29,6 @@ import asyncio
 import logging
 from collections.abc import Sequence
 
-from catalog_matching.models import TargetSegment
 from emule_indexer.application.edge_state import EdgeState
 from emule_indexer.application.networks import ED2K, KAD
 from emule_indexer.application.search_worker import BackoffRegistry, SearchTask, SearchWorker
@@ -153,7 +152,7 @@ async def run_search_cycle(
     *,
     workers: Sequence[SearchWorker],
     clients: Sequence[MuleClient],
-    targets: Sequence[TargetSegment],
+    keywords: Sequence[str],
     rng: Rng,
     node_id: str,
     cycle_index: int,
@@ -166,8 +165,8 @@ async def run_search_cycle(
     """Exécute UN cycle complet (spec §4) ; persiste l'avance + le backoff EN FIN (spec §7)."""
     started = clock.now()
     await _aggregate_coverage(clients, telemetry, edge)
-    keywords = generate_keywords(targets)
-    texts = tuple(keyword.text for keyword in keywords)
+    generated = generate_keywords(keywords)
+    texts = tuple(keyword.text for keyword in generated)
     ordered = shuffle_for_cycle(texts, rng, node_id, cycle_index)
     # LIFO (logic-search#0) : une tâche re-enfilée par un worker en backoff doit être
     # immédiatement disponible pour un PAIR (pas re-tirée par le même worker via FIFO →
