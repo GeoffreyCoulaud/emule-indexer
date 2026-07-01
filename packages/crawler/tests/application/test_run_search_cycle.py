@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 from catalog_matching.engine import MatchingEngine
-from catalog_matching.models import TargetSegment
 from emule_indexer.adapters.persistence_sqlite.catalog_repository import SqliteCatalogRepository
 from emule_indexer.adapters.persistence_sqlite.connection import open_local
 from emule_indexer.adapters.persistence_sqlite.scheduler_state_repository import (
@@ -34,15 +33,7 @@ from tests.application.fakes import (
 
 _HASH = "31d6cfe0d16ae931b73c59d7e0c089c0"
 _DL_NAME = "Keroro N°062A Les demoiselles cambrioleuses.avi"
-_TARGETS = (
-    TargetSegment(
-        season=2,
-        seasonal_number=11,
-        absolute_number=62,
-        segment="A",
-        title="Les demoiselles cambrioleuses",
-    ),
-)
+_KEYWORDS = ("keroro", "titar")
 
 # keyword_pause 1.0..1.0 (min == max) → pause FIXE de 1.0s (jitter span 0) : chaque pause
 # inter-mots-clés ajoute EXACTEMENT 1.0s aux clock.sleeps, ce qui rend la pause OBSERVABLE
@@ -126,7 +117,7 @@ async def test_single_instance_cycle_records_and_advances(
     await run_search_cycle(
         workers=[worker],
         clients=[client],
-        targets=_TARGETS,
+        keywords=_KEYWORDS,
         rng=_NoopRng(),
         node_id="node-A",
         cycle_index=0,
@@ -156,7 +147,7 @@ async def test_two_workers_drain_the_same_queue(
     await run_search_cycle(
         workers=workers,
         clients=[client_a, client_b],
-        targets=_TARGETS,
+        keywords=_KEYWORDS,
         rng=_NoopRng(),
         node_id="node-A",
         cycle_index=3,
@@ -189,7 +180,7 @@ async def test_one_instance_blind_still_runs_others(
     await run_search_cycle(
         workers=workers,
         clients=[client_a, client_b],
-        targets=_TARGETS,
+        keywords=_KEYWORDS,
         rng=_NoopRng(),
         node_id="node-A",
         cycle_index=0,
@@ -219,7 +210,7 @@ async def test_cycle_logs_blind_coverage(
         await run_search_cycle(
             workers=[worker],
             clients=[client],
-            targets=_TARGETS,
+            keywords=_KEYWORDS,
             rng=_NoopRng(),
             node_id="node-A",
             cycle_index=0,
@@ -252,7 +243,7 @@ async def test_unreachable_status_makes_instance_not_capable_and_logs_blind(
         await run_search_cycle(
             workers=[worker],
             clients=[client],
-            targets=_TARGETS,
+            keywords=_KEYWORDS,
             rng=_NoopRng(),
             node_id="node-A",
             cycle_index=0,
@@ -287,7 +278,7 @@ async def test_unreachable_instance_does_not_blind_a_healthy_peer(
         await run_search_cycle(
             workers=workers,
             clients=[down, healthy],
-            targets=_TARGETS,
+            keywords=_KEYWORDS,
             rng=_NoopRng(),
             node_id="node-A",
             cycle_index=0,
@@ -326,7 +317,7 @@ async def test_channel_backoff_is_persisted_at_cycle_end(
     await run_search_cycle(
         workers=[worker],
         clients=[client],
-        targets=_TARGETS,
+        keywords=_KEYWORDS,
         rng=_NoopRng(),
         node_id="node-A",
         cycle_index=0,
@@ -353,7 +344,7 @@ async def test_one_worker_pauses_between_items_not_after_the_last(
     from emule_indexer.application.run_search_cycle import _CHANNELS
     from emule_indexer.domain.search.keywords import generate_keywords
 
-    n_items = len(generate_keywords(_TARGETS)) * len(_CHANNELS)
+    n_items = len(generate_keywords(_KEYWORDS)) * len(_CHANNELS)
     clock = FakeClock()
     backoff = BackoffRegistry(_POLICY, clock, FakeRng())
     client = FakeMuleClient()  # search_progress=100 → pas de sleep de polling
@@ -362,7 +353,7 @@ async def test_one_worker_pauses_between_items_not_after_the_last(
     await run_search_cycle(
         workers=[worker],
         clients=[client],
-        targets=_TARGETS,
+        keywords=_KEYWORDS,
         rng=_NoopRng(),
         node_id="node-A",
         cycle_index=0,
@@ -387,7 +378,7 @@ async def test_drained_queue_skips_the_final_pause_with_two_workers(
     from emule_indexer.application.run_search_cycle import _CHANNELS
     from emule_indexer.domain.search.keywords import generate_keywords
 
-    n_items = len(generate_keywords(_TARGETS)) * len(_CHANNELS)
+    n_items = len(generate_keywords(_KEYWORDS)) * len(_CHANNELS)
     clock = FakeClock()
     backoff = BackoffRegistry(_POLICY, clock, FakeRng())
     client_a = FakeMuleClient()
@@ -398,7 +389,7 @@ async def test_drained_queue_skips_the_final_pause_with_two_workers(
     await run_search_cycle(
         workers=workers,
         clients=[client_a, client_b],
-        targets=_TARGETS,
+        keywords=_KEYWORDS,
         rng=_NoopRng(),
         node_id="node-A",
         cycle_index=0,
@@ -426,7 +417,7 @@ async def test_worker_in_backoff_does_not_consume_peers_tasks(
     from emule_indexer.application.run_search_cycle import _CHANNELS
     from emule_indexer.domain.search.keywords import generate_keywords
 
-    n_items = len(generate_keywords(_TARGETS)) * len(_CHANNELS)
+    n_items = len(generate_keywords(_KEYWORDS)) * len(_CHANNELS)
     clock = FakeClock()
     backoff = BackoffRegistry(_POLICY, clock, FakeRng())
     # 4 échecs cumulés → base × factor^3 = 2×8 = 16 s, retry_after très au-delà des pauses
@@ -441,7 +432,7 @@ async def test_worker_in_backoff_does_not_consume_peers_tasks(
     await run_search_cycle(
         workers=workers,
         clients=[client_a, client_b],
-        targets=_TARGETS,
+        keywords=_KEYWORDS,
         rng=_NoopRng(),
         node_id="node-A",
         cycle_index=0,
@@ -468,7 +459,7 @@ async def test_all_workers_in_backoff_drop_tasks_with_telemetry(
     from emule_indexer.domain.observability.events import SearchTaskDropped
     from emule_indexer.domain.search.keywords import generate_keywords
 
-    n_items = len(generate_keywords(_TARGETS)) * len(_CHANNELS)
+    n_items = len(generate_keywords(_KEYWORDS)) * len(_CHANNELS)
     clock = FakeClock()
     backoff = BackoffRegistry(_POLICY, clock, FakeRng())
     # 4 échecs par instance → backoff au-delà de la durée du cycle (cf. test précédent).
@@ -484,7 +475,7 @@ async def test_all_workers_in_backoff_drop_tasks_with_telemetry(
     await run_search_cycle(
         workers=workers,
         clients=[client_a, client_b],
-        targets=_TARGETS,
+        keywords=_KEYWORDS,
         rng=_NoopRng(),
         node_id="node-A",
         cycle_index=0,
@@ -537,7 +528,7 @@ async def test_repository_error_on_write_cycle_state_is_absorbed(
         await run_search_cycle(
             workers=[worker],
             clients=[client],
-            targets=_TARGETS,
+            keywords=_KEYWORDS,
             rng=_NoopRng(),
             node_id="node-A",
             cycle_index=0,
@@ -587,7 +578,7 @@ async def test_repository_error_on_save_channel_backoff_is_absorbed(
         await run_search_cycle(
             workers=[worker],
             clients=[client],
-            targets=_TARGETS,
+            keywords=_KEYWORDS,
             rng=_NoopRng(),
             node_id="node-A",
             cycle_index=0,
@@ -615,7 +606,7 @@ async def test_emits_cycle_completed_and_connected_gauges(
     await run_search_cycle(
         workers=[worker],
         clients=[client],
-        targets=_TARGETS,
+        keywords=_KEYWORDS,
         rng=_NoopRng(),
         node_id="node-A",
         cycle_index=0,
@@ -645,7 +636,7 @@ async def test_blind_coverage_is_edge_triggered(
     await run_search_cycle(
         workers=[worker],
         clients=[client],
-        targets=_TARGETS,
+        keywords=_KEYWORDS,
         rng=_NoopRng(),
         node_id="node-A",
         cycle_index=0,
@@ -662,7 +653,7 @@ async def test_blind_coverage_is_edge_triggered(
     await run_search_cycle(
         workers=[worker],
         clients=[client],
-        targets=_TARGETS,
+        keywords=_KEYWORDS,
         rng=_NoopRng(),
         node_id="node-A",
         cycle_index=1,
